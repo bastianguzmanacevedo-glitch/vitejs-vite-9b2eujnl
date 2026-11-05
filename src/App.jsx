@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import imageCompression from 'browser-image-compression';
 import { initializeApp } from 'firebase/app';
 import {
   getFirestore,
@@ -8,12 +9,18 @@ import {
   query,
   orderBy,
   serverTimestamp,
+  where,
+  getDocs,
+  deleteDoc,
+  updateDoc,
+  doc,
 } from 'firebase/firestore';
 import {
   getStorage,
   ref,
   uploadString,
   getDownloadURL,
+  deleteObject,
 } from 'firebase/storage';
 import {
   Camera,
@@ -31,6 +38,8 @@ import {
   RefreshCw,
   LogOut,
   Image as ImageIcon,
+  ClipboardCheck,
+  Trash2,
 } from 'lucide-react';
 
 // --- CONFIGURACIÓN DE FIREBASE ---
@@ -47,6 +56,9 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const storage = getStorage(app);
+
+// Contraseña numérica del Panel Administrador SAP
+const ADMIN_PIN = '2640';
 
 // --- CATÁLOGO DE PRODUCCIÓN EL ESPIGAL ---
 const CATALOGO_PAN = {
@@ -66,7 +78,7 @@ const ETAPAS = [
     id: 1,
     name: 'Bodega',
     icon: Package,
-    description: 'Despacho de materias primas por BATCH',
+    description: 'Despacho de materias primas por carro',
   },
   {
     id: 2,
@@ -86,6 +98,12 @@ const ETAPAS = [
     icon: CheckCircle,
     description: 'Envasado y congelado final',
   },
+  {
+    id: 5,
+    name: 'Control de calidad',
+    icon: ClipboardCheck,
+    description: 'Revisión final de calidad',
+  },
 ];
 
 export default function App() {
@@ -103,6 +121,11 @@ export default function App() {
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
+  // Acceso Administrador
+  const [showPinAdmin, setShowPinAdmin] = useState(false);
+  const [pinAdmin, setPinAdmin] = useState('');
+  const [pinError, setPinError] = useState('');
+
   // Filtros Dashboard
   const [searchTerm, setSearchTerm] = useState('');
   const [filtroEtapa, setFiltroEtapa] = useState('Todas');
@@ -115,9 +138,9 @@ export default function App() {
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
-        const docs = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
+        const docs = snapshot.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
         }));
         setOts(docs);
         setLoading(false);
@@ -130,37 +153,95 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  const handleCapturePhoto = (e) => {
+  const handleCapturePhoto = async (e) => {
     const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setFotoBase64(reader.result);
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+
+    // Comprime la foto (máx. ~1 MB) para ahorrar espacio en Firebase.
+    // Si la compresión falla, se usa la foto original.
+    let finalFile = file;
+    try {
+      finalFile = await imageCompression(file, {
+        maxSizeMB: 1,
+        maxWidthOrHeight: 1920,
+        useWebWorker: true,
+      });
+    } catch (err) {
+      console.error('Error al comprimir la foto:', err);
+    }
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setFotoBase64(reader.result);
+    };
+    reader.readAsDataURL(finalFile);
+  };
+
+  // Borra la foto de cada registro anterior de la OT y lo marca como
+  // "foto reemplazada". Un fallo aquí no afecta al registro nuevo.
+  const borrarFotosAnteriores = async (docsPrevios, etapaNueva) => {
+    for (const d of docsPrevios) {
+      const fotoAnterior = d.data().photoURL;
+      if (!fotoAnterior) continue;
+      try {
+        await deleteObject(ref(storage, fotoAnterior));
+      } catch (err) {
+        // Si la foto ya no existía, igual se limpia el registro
+        if (err?.code !== 'storage/object-not-found') {
+          console.error('No se pudo borrar la foto anterior:', err);
+          continue;
+        }
+      }
+      try {
+        await updateDoc(doc(db, 'ordenes_trabajo', d.id), {
+          photoURL: null,
+          fotoReemplazadaEn: etapaNueva,
+        });
+      } catch (err) {
+        console.error('No se pudo actualizar el registro anterior:', err);
+      }
     }
   };
 
   const handleSubmitRegistro = async (e) => {
     e.preventDefault();
-    if (!numOt.trim()) return setErrorMsg('Ingresa el número de OT');
-    if (!fotoBase64)
-      return setErrorMsg('Es obligatorio tomar una foto de la OT');
+    const otNumber = numOt.trim();
+    if (!otNumber) return setErrorMsg('Ingresa el número de OT');
 
     setUploading(true);
     setErrorMsg('');
     setSuccessMsg('');
 
     try {
-      const photoRef = ref(
-        storage,
-        `ots/${numOt}_${session.etapa}_${Date.now()}.jpg`
+      // Todos los registros previos de esta OT (en cualquier etapa)
+      const previos = await getDocs(
+        query(
+          collection(db, 'ordenes_trabajo'),
+          where('otNumber', '==', otNumber)
+        )
       );
-      await uploadString(photoRef, fotoBase64, 'data_url');
-      const photoURL = await getDownloadURL(photoRef);
+
+      // Bloquea OTs duplicadas en la misma etapa
+      if (previos.docs.some((d) => d.data().etapa === session.etapa)) {
+        setErrorMsg(
+          `La OT #${otNumber} ya fue registrada en la etapa ${session.etapa}.`
+        );
+        return;
+      }
+
+      // La foto es opcional
+      let photoURL = null;
+      if (fotoBase64) {
+        const photoRef = ref(
+          storage,
+          `ots/${otNumber}_${session.etapa}_${Date.now()}.jpg`
+        );
+        await uploadString(photoRef, fotoBase64, 'data_url');
+        photoURL = await getDownloadURL(photoRef);
+      }
 
       await addDoc(collection(db, 'ordenes_trabajo'), {
-        otNumber: numOt.trim(),
+        otNumber: otNumber,
         categoria: categoriaSel || 'No especificada',
         variedad: variedadSel || 'No especificada',
         batches: Number(batchCount) || 1,
@@ -175,8 +256,14 @@ export default function App() {
         }),
       });
 
+      // Si se subió una foto nueva, borra las fotos de etapas anteriores
+      // para dejar solo una foto por OT y ahorrar espacio en Storage.
+      if (photoURL) {
+        await borrarFotosAnteriores(previos.docs, session.etapa);
+      }
+
       setSuccessMsg(
-        `¡OT #${numOt} registrada exitosamente en ${session.etapa}!`
+        `¡OT #${otNumber} registrada exitosamente en ${session.etapa}!`
       );
       setNumOt('');
       setFotoBase64(null);
@@ -191,12 +278,36 @@ export default function App() {
     }
   };
 
+  const handleDeleteOT = async (ot) => {
+    const confirmar = window.confirm(
+      `¿Seguro que quieres eliminar la OT #${ot.otNumber} (${ot.etapa})?\n\nSe borrará el registro y su foto. Esta acción no se puede deshacer.`
+    );
+    if (!confirmar) return;
+
+    try {
+      await deleteDoc(doc(db, 'ordenes_trabajo', ot.id));
+    } catch (err) {
+      console.error('Error al eliminar la OT:', err);
+      alert('Hubo un error al eliminar la OT. Inténtalo de nuevo.');
+      return;
+    }
+
+    // Borra la foto para liberar espacio (si falla, el registro ya se eliminó)
+    if (ot.photoURL) {
+      try {
+        await deleteObject(ref(storage, ot.photoURL));
+      } catch (err) {
+        console.error('No se pudo borrar la foto:', err);
+      }
+    }
+  };
+
   const handleExportCSV = () => {
     const headers = [
       'OT SAP',
       'Categoria',
       'Variedad',
-      'Batches',
+      'Numero de carro',
       'Etapa Actual',
       'Ultimo Operario',
       'Fecha',
@@ -314,15 +425,72 @@ export default function App() {
               </div>
             </div>
 
-            <button
-              onClick={() =>
-                setSession({ user: 'Administrador SAP', role: 'admin' })
-              }
-              className="w-full py-3 px-4 bg-slate-900 hover:bg-slate-800 text-white font-semibold rounded-xl text-sm flex items-center justify-center gap-2 transition-all shadow-md shadow-slate-900/20"
-            >
-              <ShieldCheck className="w-4 h-4 text-amber-400" /> Panel
-              Administrador SAP
-            </button>
+            {!showPinAdmin ? (
+              <button
+                onClick={() => {
+                  setShowPinAdmin(true);
+                  setPinAdmin('');
+                  setPinError('');
+                }}
+                className="w-full py-3 px-4 bg-slate-900 hover:bg-slate-800 text-white font-semibold rounded-xl text-sm flex items-center justify-center gap-2 transition-all shadow-md shadow-slate-900/20"
+              >
+                <ShieldCheck className="w-4 h-4 text-amber-400" /> Panel
+                Administrador SAP
+              </button>
+            ) : (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (pinAdmin === ADMIN_PIN) {
+                    setShowPinAdmin(false);
+                    setPinAdmin('');
+                    setPinError('');
+                    setSession({ user: 'Administrador SAP', role: 'admin' });
+                  } else {
+                    setPinError('Contraseña incorrecta');
+                    setPinAdmin('');
+                  }
+                }}
+                className="space-y-3"
+              >
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                  Contraseña Administrador
+                </label>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  autoComplete="off"
+                  autoFocus
+                  value={pinAdmin}
+                  onChange={(e) =>
+                    setPinAdmin(e.target.value.replace(/\D/g, ''))
+                  }
+                  placeholder="••••"
+                  className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-slate-700 focus:border-slate-700 text-center text-lg tracking-[0.5em] font-bold bg-slate-50 focus:bg-white transition-all"
+                />
+                {pinError && (
+                  <p className="text-xs text-red-600 font-bold text-center">
+                    {pinError}
+                  </p>
+                )}
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowPinAdmin(false)}
+                    className="flex-1 py-3 px-4 bg-white hover:bg-slate-50 text-slate-600 font-semibold rounded-xl text-sm border border-slate-200 transition-all"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 py-3 px-4 bg-slate-900 hover:bg-slate-800 text-white font-semibold rounded-xl text-sm flex items-center justify-center gap-2 transition-all shadow-md shadow-slate-900/20"
+                  >
+                    <ShieldCheck className="w-4 h-4 text-amber-400" /> Entrar
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       </div>
@@ -452,7 +620,7 @@ export default function App() {
 
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
-                    Cantidad de BATCH
+                    Número de carro
                   </label>
                   <input
                     type="number"
@@ -465,7 +633,7 @@ export default function App() {
 
                 <div className="pt-2">
                   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 text-center">
-                    Fotografía de la OT
+                    Fotografía de la OT (opcional)
                   </label>
                   <div className="flex justify-center px-6 pt-6 pb-7 border-2 border-slate-200 border-dashed rounded-2xl hover:border-amber-500 hover:bg-amber-50/30 transition-all bg-slate-50 relative">
                     {fotoBase64 ? (
@@ -512,7 +680,7 @@ export default function App() {
                   className="w-full py-4 px-4 bg-amber-700 hover:bg-amber-800 disabled:bg-slate-300 disabled:shadow-none text-white font-bold rounded-2xl shadow-lg shadow-amber-900/20 transition-all flex items-center justify-center gap-2 text-base mt-6"
                 >
                   {uploading ? (
-                    <>Subiendo a la nube...</>
+                    <>Guardando...</>
                   ) : (
                     <>
                       <CheckCircle className="w-5 h-5" /> Registrar OT en{' '}
@@ -527,7 +695,7 @@ export default function App() {
 
         {session.role === 'admin' && (
           <div className="space-y-6">
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 sm:gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
               <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between col-span-2 md:col-span-1">
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                   Total OTs
@@ -612,18 +780,19 @@ export default function App() {
                     <tr>
                       <th className="px-6 py-4">OT SAP</th>
                       <th className="px-6 py-4">Variedad / Producto</th>
-                      <th className="px-6 py-4">Batches</th>
+                      <th className="px-6 py-4">N° de carro</th>
                       <th className="px-6 py-4">Etapa Actual</th>
                       <th className="px-6 py-4">Operario</th>
                       <th className="px-6 py-4">Fecha/Hora</th>
                       <th className="px-6 py-4 text-center">Registro</th>
+                      <th className="px-6 py-4 text-center">Acciones</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
                     {loading ? (
                       <tr>
                         <td
-                          colSpan="7"
+                          colSpan="8"
                           className="px-6 py-12 text-center text-slate-400 font-medium"
                         >
                           Cargando registros sincronizados...
@@ -632,7 +801,7 @@ export default function App() {
                     ) : ots.length === 0 ? (
                       <tr>
                         <td
-                          colSpan="7"
+                          colSpan="8"
                           className="px-6 py-12 text-center text-slate-400 font-medium"
                         >
                           No hay órdenes de trabajo activas.
@@ -669,7 +838,7 @@ export default function App() {
                               </span>
                             </td>
                             <td className="px-6 py-4 font-bold text-slate-700">
-                              {ot.batches} BATCH
+                              Carro {ot.batches}
                             </td>
                             <td className="px-6 py-4">
                               <span
@@ -680,6 +849,8 @@ export default function App() {
                                     ? 'bg-amber-50 text-amber-700 border-amber-200'
                                     : ot.etapa === 'Horneado'
                                     ? 'bg-orange-50 text-orange-700 border-orange-200'
+                                    : ot.etapa === 'Control de calidad'
+                                    ? 'bg-violet-50 text-violet-700 border-violet-200'
                                     : 'bg-emerald-50 text-emerald-700 border-emerald-200'
                                 }`}
                               >
@@ -708,11 +879,28 @@ export default function App() {
                                 >
                                   <ImageIcon className="w-4 h-4" /> Ver Foto
                                 </a>
+                              ) : ot.fotoReemplazadaEn ? (
+                                <span
+                                  title="La foto se reemplazó por la de una etapa posterior"
+                                  className="text-xs text-slate-400 bg-slate-100 px-3 py-2 rounded-xl font-medium"
+                                >
+                                  Foto en {ot.fotoReemplazadaEn}
+                                </span>
                               ) : (
                                 <span className="text-xs text-slate-400 bg-slate-100 px-3 py-2 rounded-xl font-medium">
                                   Sin foto
                                 </span>
                               )}
+                            </td>
+                            <td className="px-6 py-4 text-center">
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteOT(ot)}
+                                title="Eliminar OT"
+                                className="inline-flex items-center justify-center gap-1.5 text-xs font-bold text-red-600 hover:text-red-800 bg-red-50 hover:bg-red-100 px-3 py-2 rounded-xl border border-red-200 transition-all"
+                              >
+                                <Trash2 className="w-4 h-4" /> Eliminar
+                              </button>
                             </td>
                           </tr>
                         ))
