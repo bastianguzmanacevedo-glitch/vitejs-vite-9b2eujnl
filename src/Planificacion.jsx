@@ -61,6 +61,12 @@ const agruparPorVariedad = (ots) => {
 // se identifica por su línea de SAP y no por el código.
 const claveLinea = (ingrediente) => String(ingrediente.linea);
 
+// La masa va primero y el topping, que se pesa aparte, al final
+const ordenarLineas = (ingredientes) =>
+  [...(ingredientes || [])].sort(
+    (a, b) => Number(!!a.topping) - Number(!!b.topping)
+  );
+
 const progreso = (ot) => {
   const total = (ot.ingredientes || []).length;
   const hechos = (ot.ingredientes || []).filter(
@@ -238,11 +244,18 @@ export function PlanificacionBodega({ session, registros, onRegistrar }) {
         )}
 
         <ul className="mt-5 space-y-2.5">
-          {(seleccion.ingredientes || []).map((ing) => {
+          {ordenarLineas(seleccion.ingredientes).map((ing, idx, lista) => {
             const linea = claveLinea(ing);
             const check = seleccion.checks && seleccion.checks[linea];
+            const inicioTopping =
+              ing.topping && (idx === 0 || !lista[idx - 1].topping);
             return (
               <li key={linea}>
+                {inicioTopping && (
+                  <h3 className="text-sm font-black text-amber-900 border-b border-amber-100 pb-2 mt-6 mb-2.5 text-left">
+                    Topping (se pesa aparte)
+                  </h3>
+                )}
                 <label
                   className={`flex gap-3.5 p-4 rounded-2xl border cursor-pointer transition-all ${
                     check
@@ -633,7 +646,7 @@ export function AdminLotes() {
 
                       {abierta && (
                         <ul className="pb-4 pl-6 space-y-3">
-                          {(ot.ingredientes || []).map((ing) => {
+                          {ordenarLineas(ot.ingredientes).map((ing) => {
                             const clave = `${ot.id}|${claveLinea(ing)}`;
                             return (
                               <li
@@ -646,6 +659,11 @@ export function AdminLotes() {
                                     <span className="text-xs font-medium text-slate-400">
                                       {ing.codigo}
                                     </span>
+                                    {ing.topping && (
+                                      <span className="ml-1.5 text-[10px] font-bold uppercase text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded">
+                                        Topping
+                                      </span>
+                                    )}
                                   </span>
                                   <span className="font-black text-sm text-slate-900">
                                     {cantidadLegible(ing.cantidad, ing.unidad)}
