@@ -68,11 +68,33 @@ const ordenarLineas = (ingredientes) =>
     (a, b) => Number(!!a.seccion) - Number(!!b.seccion)
   );
 
-const progreso = (ot) => {
+// Si la OT ya está en una etapa posterior a Bodega, la materia prima ya salió
+// aunque el operario no haya marcado las casillas: se muestran marcadas solas.
+const ETAPAS_POSTERIORES = [
+  'Amasado',
+  'Horneado',
+  'Packing',
+  'Control de calidad',
+];
+
+// otNumber -> última etapa posterior registrada (registros: del más nuevo al más antiguo)
+const mapaEtapasPosteriores = (registros) => {
+  const mapa = new Map();
+  registros.forEach((r) => {
+    if (ETAPAS_POSTERIORES.includes(r.etapa) && !mapa.has(r.otNumber)) {
+      mapa.set(r.otNumber, r.etapa);
+    }
+  });
+  return mapa;
+};
+
+const progreso = (ot, etapaPosterior) => {
   const total = (ot.ingredientes || []).length;
-  const hechos = (ot.ingredientes || []).filter(
-    (i) => ot.checks && ot.checks[claveLinea(i)]
-  ).length;
+  const hechos = etapaPosterior
+    ? total
+    : (ot.ingredientes || []).filter(
+        (i) => ot.checks && ot.checks[claveLinea(i)]
+      ).length;
   return { total, hechos, completa: total > 0 && hechos === total };
 };
 
@@ -180,6 +202,10 @@ export function PlanificacionBodega({ session, registros, onRegistrar }) {
 
   const grupos = useMemo(() => agruparPorVariedad(ots), [ots]);
   const seleccion = ots.find((o) => o.id === seleccionId);
+  const posteriores = useMemo(
+    () => mapaEtapasPosteriores(registros),
+    [registros]
+  );
   const estaRegistrada = (ot) =>
     registros.some((r) => r.otNumber === ot.otNumber && r.etapa === 'Bodega');
 
@@ -206,7 +232,8 @@ export function PlanificacionBodega({ session, registros, onRegistrar }) {
   };
 
   if (seleccion) {
-    const { total, hechos, completa } = progreso(seleccion);
+    const etapaPosterior = posteriores.get(seleccion.otNumber);
+    const { total, hechos, completa } = progreso(seleccion, etapaPosterior);
     const registrada = estaRegistrada(seleccion);
     return (
       <div className="bg-white rounded-3xl p-5 sm:p-8 shadow-sm border border-slate-100">
@@ -248,6 +275,7 @@ export function PlanificacionBodega({ session, registros, onRegistrar }) {
           {ordenarLineas(seleccion.ingredientes).map((ing, idx, lista) => {
             const linea = claveLinea(ing);
             const check = seleccion.checks && seleccion.checks[linea];
+            const marcada = !!check || !!etapaPosterior;
             const inicioSeccion =
               ing.seccion &&
               (idx === 0 || lista[idx - 1].seccion !== ing.seccion);
@@ -259,15 +287,18 @@ export function PlanificacionBodega({ session, registros, onRegistrar }) {
                   </h3>
                 )}
                 <label
-                  className={`flex gap-3.5 p-4 rounded-2xl border cursor-pointer transition-all ${
-                    check
+                  className={`flex gap-3.5 p-4 rounded-2xl border transition-all ${
+                    etapaPosterior ? '' : 'cursor-pointer'
+                  } ${
+                    marcada
                       ? 'bg-emerald-50 border-emerald-200'
                       : 'bg-slate-50 border-slate-200 hover:border-amber-400'
                   }`}
                 >
                   <input
                     type="checkbox"
-                    checked={!!check}
+                    checked={marcada}
+                    disabled={!!etapaPosterior}
                     onChange={(e) =>
                       marcar(seleccion, linea, e.target.checked)
                     }
@@ -277,7 +308,7 @@ export function PlanificacionBodega({ session, registros, onRegistrar }) {
                     <div className="flex flex-wrap justify-between gap-x-3">
                       <span
                         className={`font-bold ${
-                          check ? 'text-emerald-900' : 'text-slate-800'
+                          marcada ? 'text-emerald-900' : 'text-slate-800'
                         }`}
                       >
                         {ing.nombre}
@@ -288,10 +319,16 @@ export function PlanificacionBodega({ session, registros, onRegistrar }) {
                     </div>
                     <Lotes ingrediente={ing} />
                     <Avisos ingrediente={ing} />
-                    {check && (
+                    {check ? (
                       <p className="text-[11px] text-emerald-700 mt-1.5 font-medium">
                         Marcado por {check.operario} a las {check.hora}
                       </p>
+                    ) : (
+                      etapaPosterior && (
+                        <p className="text-[11px] text-emerald-700 mt-1.5 font-medium">
+                          Marcado solo: la OT ya está en {etapaPosterior}
+                        </p>
+                      )
                     )}
                   </div>
                 </label>
@@ -300,7 +337,11 @@ export function PlanificacionBodega({ session, registros, onRegistrar }) {
           })}
         </ul>
 
-        {registrada ? (
+        {etapaPosterior ? (
+          <p className="mt-6 text-center text-sm font-bold text-emerald-700 flex items-center justify-center gap-2">
+            <CheckCircle className="w-5 h-5" /> OT ya está en {etapaPosterior}
+          </p>
+        ) : registrada ? (
           <p className="mt-6 text-center text-sm font-bold text-emerald-700 flex items-center justify-center gap-2">
             <CheckCircle className="w-5 h-5" /> OT ya registrada en Bodega
           </p>
@@ -354,7 +395,11 @@ export function PlanificacionBodega({ session, registros, onRegistrar }) {
               </h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 {grupo.lista.map((ot) => {
-                  const { total, hechos, completa } = progreso(ot);
+                  const etapaPosterior = posteriores.get(ot.otNumber);
+                  const { total, hechos, completa } = progreso(
+                    ot,
+                    etapaPosterior
+                  );
                   const registrada = estaRegistrada(ot);
                   return (
                     <button
@@ -372,7 +417,9 @@ export function PlanificacionBodega({ session, registros, onRegistrar }) {
                           OT {ot.otNumber}
                         </span>
                         <span className="text-xs font-medium text-slate-500">
-                          {registrada
+                          {etapaPosterior
+                            ? `Ya está en ${etapaPosterior}`
+                            : registrada
                             ? 'Registrada'
                             : completa
                             ? 'Lista para registrar'
@@ -573,7 +620,11 @@ const EditorLotes = ({ ot, ingrediente, otsDelDia, onCerrar }) => {
   );
 };
 
-export function AdminLotes() {
+export function AdminLotes({ registros }) {
+  const posteriores = useMemo(
+    () => mapaEtapasPosteriores(registros),
+    [registros]
+  );
   const [fecha, setFecha] = useState(hoyISO);
   const [abiertaId, setAbiertaId] = useState(null);
   const [editando, setEditando] = useState(null);
@@ -620,7 +671,10 @@ export function AdminLotes() {
               <div className="divide-y divide-slate-100">
                 {grupo.lista.map((ot) => {
                   const abierta = abiertaId === ot.id;
-                  const { total, hechos } = progreso(ot);
+                  const { total, hechos } = progreso(
+                    ot,
+                    posteriores.get(ot.otNumber)
+                  );
                   return (
                     <div key={ot.id}>
                       <button

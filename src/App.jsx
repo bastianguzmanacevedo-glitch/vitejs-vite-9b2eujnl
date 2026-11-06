@@ -895,7 +895,7 @@ export default function App() {
               ))}
             </div>
 
-            {vistaAdmin === 'lotes' && <AdminLotes />}
+            {vistaAdmin === 'lotes' && <AdminLotes registros={ots} />}
 
             {vistaAdmin === 'monitoreo' && (
             <>

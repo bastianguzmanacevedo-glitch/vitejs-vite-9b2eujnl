@@ -3,8 +3,9 @@
 // Sin --oficial escribe en la copia de prueba (colección prueba_planificacion_ots).
 //
 // Al volver a subir un mismo día se respeta lo que ya se hizo en la app: las
-// casillas marcadas y, en cada materia prima marcada o con lote editado a mano,
-// la línea anterior. Las OT que ya no están en SAP se borran si nadie las empezó.
+// casillas marcadas y, en cada materia prima marcada o con lote editado a mano, y
+// en las OT que ya pasaron de Bodega, la línea anterior. Las OT que ya no están en
+// SAP se borran si nadie las empezó.
 import { readFileSync } from 'node:fs';
 import { initializeApp } from 'firebase/app';
 import {
@@ -36,6 +37,16 @@ const app = initializeApp({
 });
 const db = getFirestore(app);
 const COL = oficial ? 'planificacion_ots' : 'prueba_planificacion_ots';
+const COL_OTS = oficial ? 'ordenes_trabajo' : 'prueba_ordenes_trabajo';
+
+// Una OT en una etapa posterior a Bodega ya sacó su materia prima: sus lotes no se cambian.
+const posteriores = await getDocs(
+  query(
+    collection(db, COL_OTS),
+    where('etapa', 'in', ['Amasado', 'Horneado', 'Packing', 'Control de calidad'])
+  )
+);
+const yaSalieron = new Set(posteriores.docs.map((d) => d.data().otNumber));
 
 const existentes = await getDocs(
   query(collection(db, COL), where('fecha', '==', plan.fecha))
@@ -49,7 +60,12 @@ for (const ot of plan.ots) {
 
   const ingredientes = ot.ingredientes.map((nuevo) => {
     const anterior = previo?.ingredientes?.find((i) => i.linea === nuevo.linea);
-    if (anterior && (anterior.loteManual || checks[String(nuevo.linea)])) {
+    if (
+      anterior &&
+      (yaSalieron.has(ot.otNumber) ||
+        anterior.loteManual ||
+        checks[String(nuevo.linea)])
+    ) {
       conservadas++;
       return { ...anterior, seccion: nuevo.seccion ?? null };
     }
@@ -69,7 +85,7 @@ for (const ot of plan.ots) {
 const conAvance = [];
 let borradas = 0;
 for (const [id, data] of previos) {
-  if (data.checks && Object.keys(data.checks).length > 0) {
+  if (yaSalieron.has(id) || (data.checks && Object.keys(data.checks).length > 0)) {
     conAvance.push(id);
   } else {
     await deleteDoc(doc(db, COL, id));
