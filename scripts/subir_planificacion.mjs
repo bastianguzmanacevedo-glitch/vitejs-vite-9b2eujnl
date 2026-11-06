@@ -51,7 +51,7 @@ for (const ot of plan.ots) {
     const anterior = previo?.ingredientes?.find((i) => i.linea === nuevo.linea);
     if (anterior && (anterior.loteManual || checks[String(nuevo.linea)])) {
       conservadas++;
-      return { ...anterior, topping: nuevo.topping };
+      return { ...anterior, seccion: nuevo.seccion ?? null };
     }
     return nuevo;
   });

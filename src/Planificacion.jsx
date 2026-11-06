@@ -61,10 +61,11 @@ const agruparPorVariedad = (ots) => {
 // se identifica por su línea de SAP y no por el código.
 const claveLinea = (ingrediente) => String(ingrediente.linea);
 
-// La masa va primero y el topping, que se pesa aparte, al final
+// La mezcla va primero; lo que se entrega aparte (topping o harina de polvoreo),
+// al final en su propia sección.
 const ordenarLineas = (ingredientes) =>
   [...(ingredientes || [])].sort(
-    (a, b) => Number(!!a.topping) - Number(!!b.topping)
+    (a, b) => Number(!!a.seccion) - Number(!!b.seccion)
   );
 
 const progreso = (ot) => {
@@ -247,13 +248,14 @@ export function PlanificacionBodega({ session, registros, onRegistrar }) {
           {ordenarLineas(seleccion.ingredientes).map((ing, idx, lista) => {
             const linea = claveLinea(ing);
             const check = seleccion.checks && seleccion.checks[linea];
-            const inicioTopping =
-              ing.topping && (idx === 0 || !lista[idx - 1].topping);
+            const inicioSeccion =
+              ing.seccion &&
+              (idx === 0 || lista[idx - 1].seccion !== ing.seccion);
             return (
               <li key={linea}>
-                {inicioTopping && (
+                {inicioSeccion && (
                   <h3 className="text-sm font-black text-amber-900 border-b border-amber-100 pb-2 mt-6 mb-2.5 text-left">
-                    Topping (se pesa aparte)
+                    {ing.seccion} (se entrega aparte)
                   </h3>
                 )}
                 <label
@@ -659,9 +661,9 @@ export function AdminLotes() {
                                     <span className="text-xs font-medium text-slate-400">
                                       {ing.codigo}
                                     </span>
-                                    {ing.topping && (
+                                    {ing.seccion && (
                                       <span className="ml-1.5 text-[10px] font-bold uppercase text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded">
-                                        Topping
+                                        {ing.seccion}
                                       </span>
                                     )}
                                   </span>
