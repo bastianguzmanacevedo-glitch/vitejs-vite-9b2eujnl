@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import imageCompression from 'browser-image-compression';
-import { initializeApp } from 'firebase/app';
 import {
-  getFirestore,
   collection,
   addDoc,
   onSnapshot,
@@ -16,7 +14,6 @@ import {
   doc,
 } from 'firebase/firestore';
 import {
-  getStorage,
   ref,
   uploadString,
   getDownloadURL,
@@ -40,22 +37,10 @@ import {
   Image as ImageIcon,
   ClipboardCheck,
   Trash2,
+  ClipboardList,
 } from 'lucide-react';
-
-// --- CONFIGURACIÓN DE FIREBASE ---
-const firebaseConfig = {
-  apiKey: 'AIzaSyCnoxH5nc6nLeuYlAQcglu_8NTzjWwIJsc',
-  authDomain: 'el-espigal.firebaseapp.com',
-  projectId: 'el-espigal',
-  storageBucket: 'el-espigal.firebasestorage.app',
-  messagingSenderId: '127308259288',
-  appId: '1:127308259288:web:daf03dc3437c5fb9b3dcad',
-  measurementId: 'G-F6TY4PJ658',
-};
-
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-const storage = getStorage(app);
+import { CARPETA_FOTOS, COL_OTS, db, ES_PRUEBA, storage } from './firebase';
+import { AdminLotes, PlanificacionBodega } from './Planificacion';
 
 // Contraseña numérica del Panel Administrador SAP
 const ADMIN_PIN = '2640';
@@ -106,6 +91,51 @@ const ETAPAS = [
   },
 ];
 
+// Estas categorías se cuentan en latas; todas las demás, en unidades.
+const CATEGORIAS_EN_LATAS = [
+  'Coliza',
+  'Ciabatta coctail',
+  'Ciabatta grande',
+  'Fogaccia',
+];
+
+const claveUltimaVariedad = (etapa) => `espigal_ultima_variedad_${etapa}`;
+
+const leerUltimaVariedad = (etapa) => {
+  try {
+    return JSON.parse(localStorage.getItem(claveUltimaVariedad(etapa))) || {};
+  } catch {
+    return {};
+  }
+};
+
+const guardarUltimaVariedad = (etapa, categoria, variedad) => {
+  try {
+    localStorage.setItem(
+      claveUltimaVariedad(etapa),
+      JSON.stringify({ categoria, variedad })
+    );
+  } catch {
+    // Sin almacenamiento disponible: la selección dura hasta salir de la app.
+  }
+};
+
+const textoProduccion = (ot) => {
+  const partes = [];
+  if (ot.cantidadProducida != null) {
+    partes.push(`${ot.cantidadProducida} ${ot.tipoCantidad || 'unidades'}`);
+  }
+  if (ot.cajas != null) partes.push(`${ot.cajas} cajas`);
+  return partes.join(' / ');
+};
+
+const BannerPrueba = () =>
+  ES_PRUEBA ? (
+    <div className="bg-violet-700 text-white text-center text-xs font-bold py-2 px-4">
+      COPIA DE PRUEBA: los datos de aquí no afectan a la app oficial
+    </div>
+  ) : null;
+
 export default function App() {
   const [session, setSession] = useState(null);
   const [ots, setOts] = useState([]);
@@ -116,6 +146,9 @@ export default function App() {
   const [categoriaSel, setCategoriaSel] = useState('');
   const [variedadSel, setVariedadSel] = useState('');
   const [batchCount, setBatchCount] = useState(1);
+  const [cantidadProducida, setCantidadProducida] = useState('');
+  const [cajas, setCajas] = useState('');
+  const [rechazada100, setRechazada100] = useState(false);
   const [fotoBase64, setFotoBase64] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -126,15 +159,34 @@ export default function App() {
   const [pinAdmin, setPinAdmin] = useState('');
   const [pinError, setPinError] = useState('');
 
+  // Pestañas: Bodega (registrar / planificacion), Admin (monitoreo / lotes)
+  const [vistaBodega, setVistaBodega] = useState('planificacion');
+  const [vistaAdmin, setVistaAdmin] = useState('monitoreo');
+
   // Filtros Dashboard
   const [searchTerm, setSearchTerm] = useState('');
   const [filtroEtapa, setFiltroEtapa] = useState('Todas');
 
+  const etapaActual = session?.etapa;
+  const tipoCantidad = CATEGORIAS_EN_LATAS.includes(categoriaSel)
+    ? 'latas'
+    : 'unidades';
+
+  // Al entrar a un puesto, recupera la última variedad usada en ese puesto
   useEffect(() => {
-    const q = query(
-      collection(db, 'ordenes_trabajo'),
-      orderBy('createdAt', 'desc')
+    if (!etapaActual) return;
+    const ultima = leerUltimaVariedad(etapaActual);
+    const categoria = CATALOGO_PAN[ultima.categoria] ? ultima.categoria : '';
+    setCategoriaSel(categoria);
+    setVariedadSel(
+      categoria && CATALOGO_PAN[categoria].includes(ultima.variedad)
+        ? ultima.variedad
+        : ''
     );
+  }, [etapaActual]);
+
+  useEffect(() => {
+    const q = query(collection(db, COL_OTS), orderBy('createdAt', 'desc'));
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
@@ -193,7 +245,7 @@ export default function App() {
         }
       }
       try {
-        await updateDoc(doc(db, 'ordenes_trabajo', d.id), {
+        await updateDoc(doc(db, COL_OTS, d.id), {
           photoURL: null,
           fotoReemplazadaEn: etapaNueva,
         });
@@ -207,6 +259,9 @@ export default function App() {
     e.preventDefault();
     const otNumber = numOt.trim();
     if (!otNumber) return setErrorMsg('Ingresa el número de OT');
+    if (session.etapa === 'Amasado' && (!categoriaSel || !variedadSel)) {
+      return setErrorMsg('Selecciona el tipo de pan y la variedad');
+    }
 
     setUploading(true);
     setErrorMsg('');
@@ -216,7 +271,7 @@ export default function App() {
       // Todos los registros previos de esta OT (en cualquier etapa)
       const previos = await getDocs(
         query(
-          collection(db, 'ordenes_trabajo'),
+          collection(db, COL_OTS),
           where('otNumber', '==', otNumber)
         )
       );
@@ -234,17 +289,29 @@ export default function App() {
       if (fotoBase64) {
         const photoRef = ref(
           storage,
-          `ots/${otNumber}_${session.etapa}_${Date.now()}.jpg`
+          `${CARPETA_FOTOS}/${otNumber}_${session.etapa}_${Date.now()}.jpg`
         );
         await uploadString(photoRef, fotoBase64, 'data_url');
         photoURL = await getDownloadURL(photoRef);
       }
 
-      await addDoc(collection(db, 'ordenes_trabajo'), {
+      // Datos propios de cada etapa
+      const datosEtapa = {};
+      if (session.etapa === 'Amasado') {
+        datosEtapa.cantidadProducida = Number(cantidadProducida);
+        datosEtapa.tipoCantidad = tipoCantidad;
+      }
+      if (session.etapa === 'Packing') datosEtapa.cajas = Number(cajas);
+      if (session.etapa === 'Control de calidad') {
+        datosEtapa.rechazada100 = rechazada100;
+      }
+
+      await addDoc(collection(db, COL_OTS), {
         otNumber: otNumber,
         categoria: categoriaSel || 'No especificada',
         variedad: variedadSel || 'No especificada',
         batches: Number(batchCount) || 1,
+        ...datosEtapa,
         etapa: session.etapa,
         operario: session.user,
         photoURL: photoURL,
@@ -265,11 +332,14 @@ export default function App() {
       setSuccessMsg(
         `¡OT #${otNumber} registrada exitosamente en ${session.etapa}!`
       );
+      // Se mantiene la variedad: suelen venir muchas OT seguidas de la misma
+      guardarUltimaVariedad(session.etapa, categoriaSel, variedadSel);
       setNumOt('');
       setFotoBase64(null);
-      setCategoriaSel('');
-      setVariedadSel('');
       setBatchCount(1);
+      setCantidadProducida('');
+      setCajas('');
+      setRechazada100(false);
     } catch (err) {
       console.error(err);
       setErrorMsg('Error al guardar. Verifica tu conexión a internet.');
@@ -285,7 +355,7 @@ export default function App() {
     if (!confirmar) return;
 
     try {
-      await deleteDoc(doc(db, 'ordenes_trabajo', ot.id));
+      await deleteDoc(doc(db, COL_OTS, ot.id));
     } catch (err) {
       console.error('Error al eliminar la OT:', err);
       alert('Hubo un error al eliminar la OT. Inténtalo de nuevo.');
@@ -308,6 +378,10 @@ export default function App() {
       'Categoria',
       'Variedad',
       'Numero de carro',
+      'Cantidad producida',
+      'Tipo de cantidad',
+      'Cajas',
+      'Rechazada 100%',
       'Etapa Actual',
       'Ultimo Operario',
       'Fecha',
@@ -319,6 +393,10 @@ export default function App() {
       ot.categoria,
       ot.variedad,
       ot.batches,
+      ot.cantidadProducida ?? '',
+      ot.tipoCantidad ?? '',
+      ot.cajas ?? '',
+      ot.rechazada100 ? 'Si' : '',
       ot.etapa,
       ot.operario,
       ot.fechaStr,
@@ -343,8 +421,9 @@ export default function App() {
 
   if (!session) {
     return (
-      <div className="min-h-screen bg-slate-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8 font-sans">
-        <div className="sm:mx-auto sm:w-full sm:max-w-md text-center">
+      <div className="min-h-screen bg-slate-50 flex flex-col justify-center pb-12 sm:px-6 lg:px-8 font-sans">
+        <BannerPrueba />
+        <div className="mt-12 sm:mx-auto sm:w-full sm:max-w-md text-center">
           <div className="w-32 h-32 bg-amber-700 rounded-full mx-auto flex items-center justify-center shadow-lg mb-4">
             <img
               src="/logo.png"
@@ -500,6 +579,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 font-sans pb-12">
       <header className="bg-amber-800 text-white shadow-lg sticky top-0 z-50">
+        <BannerPrueba />
         <div className="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-white/10 rounded-full flex items-center justify-center border border-white/20">
@@ -536,7 +616,43 @@ export default function App() {
 
       <main className="max-w-7xl mx-auto px-4 mt-6">
         {session.role === 'operario' && (
-          <div className="max-w-xl mx-auto space-y-6">
+          <div className="max-w-xl mx-auto space-y-4">
+            {session.etapa === 'Bodega' && (
+              <div className="grid grid-cols-2 gap-1.5 p-1.5 bg-slate-200/60 rounded-2xl">
+                {[
+                  ['planificacion', 'Planificación', ClipboardList],
+                  ['registrar', 'Registrar OT', Camera],
+                ].map(([id, texto, Icono]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setVistaBodega(id)}
+                    className={`py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all ${
+                      vistaBodega === id
+                        ? 'bg-white text-amber-800 shadow-sm'
+                        : 'text-slate-500'
+                    }`}
+                  >
+                    <Icono className="w-4 h-4" /> {texto}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {session.etapa === 'Bodega' && vistaBodega === 'planificacion' ? (
+              <PlanificacionBodega
+                session={session}
+                registros={ots}
+                onRegistrar={(ot) => {
+                  setNumOt(ot.otNumber);
+                  setCategoriaSel(ot.categoria || '');
+                  setVariedadSel(ot.variedad || '');
+                  setErrorMsg('');
+                  setSuccessMsg('');
+                  setVistaBodega('registrar');
+                }}
+              />
+            ) : (
             <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-sm border border-slate-100">
               <h2 className="text-2xl font-black text-slate-800 mb-1">
                 Registrar OT en {session.etapa}
@@ -631,6 +747,69 @@ export default function App() {
                   />
                 </div>
 
+                {session.etapa === 'Amasado' && (
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                      {!categoriaSel
+                        ? 'Unidades / Latas'
+                        : tipoCantidad === 'latas'
+                        ? 'Número de latas'
+                        : 'Unidades producidas'}
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      inputMode="numeric"
+                      required
+                      value={cantidadProducida}
+                      onChange={(e) => setCantidadProducida(e.target.value)}
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500 transition-all"
+                    />
+                  </div>
+                )}
+
+                {session.etapa === 'Packing' && (
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                      Cajas
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      inputMode="numeric"
+                      required
+                      value={cajas}
+                      onChange={(e) => setCajas(e.target.value)}
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500 transition-all"
+                    />
+                  </div>
+                )}
+
+                {session.etapa === 'Control de calidad' && (
+                  <label
+                    className={`flex items-center gap-3 p-4 rounded-2xl border cursor-pointer transition-all ${
+                      rechazada100
+                        ? 'bg-red-50 border-red-300'
+                        : 'bg-slate-50 border-slate-200'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={rechazada100}
+                      onChange={(e) => setRechazada100(e.target.checked)}
+                      className="w-5 h-5 accent-red-600 [color-scheme:light]"
+                    />
+                    <span>
+                      <span className="block text-left text-sm font-bold text-slate-800">
+                        Rechazada al 100%
+                      </span>
+                      <span className="text-xs text-slate-500">
+                        Marcar solo si se rechazó el carro completo
+                      </span>
+                    </span>
+                  </label>
+                )}
+
                 <div className="pt-2">
                   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 text-center">
                     Fotografía de la OT (opcional)
@@ -690,11 +869,36 @@ export default function App() {
                 </button>
               </form>
             </div>
+            )}
           </div>
         )}
 
         {session.role === 'admin' && (
           <div className="space-y-6">
+            <div className="grid grid-cols-2 gap-1.5 p-1.5 bg-slate-200/60 rounded-2xl max-w-md">
+              {[
+                ['monitoreo', 'Monitoreo'],
+                ['lotes', 'Planificación y lotes'],
+              ].map(([id, texto]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setVistaAdmin(id)}
+                  className={`py-2.5 rounded-xl text-sm font-bold transition-all ${
+                    vistaAdmin === id
+                      ? 'bg-white text-amber-800 shadow-sm'
+                      : 'text-slate-500'
+                  }`}
+                >
+                  {texto}
+                </button>
+              ))}
+            </div>
+
+            {vistaAdmin === 'lotes' && <AdminLotes />}
+
+            {vistaAdmin === 'monitoreo' && (
+            <>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
               <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between col-span-2 md:col-span-1">
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
@@ -781,6 +985,7 @@ export default function App() {
                       <th className="px-6 py-4">OT SAP</th>
                       <th className="px-6 py-4">Variedad / Producto</th>
                       <th className="px-6 py-4">N° de carro</th>
+                      <th className="px-6 py-4">Producción</th>
                       <th className="px-6 py-4">Etapa Actual</th>
                       <th className="px-6 py-4">Operario</th>
                       <th className="px-6 py-4">Fecha/Hora</th>
@@ -792,7 +997,7 @@ export default function App() {
                     {loading ? (
                       <tr>
                         <td
-                          colSpan="8"
+                          colSpan="9"
                           className="px-6 py-12 text-center text-slate-400 font-medium"
                         >
                           Cargando registros sincronizados...
@@ -801,7 +1006,7 @@ export default function App() {
                     ) : ots.length === 0 ? (
                       <tr>
                         <td
-                          colSpan="8"
+                          colSpan="9"
                           className="px-6 py-12 text-center text-slate-400 font-medium"
                         >
                           No hay órdenes de trabajo activas.
@@ -839,6 +1044,17 @@ export default function App() {
                             </td>
                             <td className="px-6 py-4 font-bold text-slate-700">
                               Carro {ot.batches}
+                            </td>
+                            <td className="px-6 py-4 font-bold text-slate-700 whitespace-nowrap">
+                              {ot.rechazada100 ? (
+                                <span className="inline-flex px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200">
+                                  Rechazada 100%
+                                </span>
+                              ) : (
+                                textoProduccion(ot) || (
+                                  <span className="text-slate-300">-</span>
+                                )
+                              )}
                             </td>
                             <td className="px-6 py-4">
                               <span
@@ -909,6 +1125,8 @@ export default function App() {
                 </table>
               </div>
             </div>
+            </>
+            )}
           </div>
         )}
       </main>
