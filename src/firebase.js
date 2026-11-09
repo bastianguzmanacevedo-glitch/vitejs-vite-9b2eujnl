@@ -26,3 +26,4 @@ const PREFIJO = ES_PRUEBA ? 'prueba_' : '';
 export const COL_OTS = `${PREFIJO}ordenes_trabajo`;
 export const COL_PLANIFICACION = `${PREFIJO}planificacion_ots`;
 export const CARPETA_FOTOS = `${PREFIJO}ots`;
+export const COL_INVENTARIO = `${PREFIJO}inventario`;

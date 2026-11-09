@@ -43,7 +43,13 @@ const COL_OTS = oficial ? 'ordenes_trabajo' : 'prueba_ordenes_trabajo';
 const posteriores = await getDocs(
   query(
     collection(db, COL_OTS),
-    where('etapa', 'in', ['Amasado', 'Horneado', 'Packing', 'Control de calidad'])
+    where('etapa', 'in', [
+      'Amasado',
+      'Horneado',
+      'Packing',
+      'Control SAP',
+      'Control de calidad',
+    ])
   )
 );
 const yaSalieron = new Set(posteriores.docs.map((d) => d.data().otNumber));

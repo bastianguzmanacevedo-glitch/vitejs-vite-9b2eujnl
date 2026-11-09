@@ -22,6 +22,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { COL_PLANIFICACION, db } from './firebase';
+import { ETAPAS_POSTERIORES } from './catalogo';
 
 // --- UTILIDADES ---
 const hoyISO = () => {
@@ -70,12 +71,7 @@ const ordenarLineas = (ingredientes) =>
 
 // Si la OT ya está en una etapa posterior a Bodega, la materia prima ya salió
 // aunque el operario no haya marcado las casillas: se muestran marcadas solas.
-const ETAPAS_POSTERIORES = [
-  'Amasado',
-  'Horneado',
-  'Packing',
-  'Control de calidad',
-];
+// (Amasado, Horneado, Packing, Control SAP y Control de calidad)
 
 // otNumber -> última etapa posterior registrada (registros: del más nuevo al más antiguo)
 const mapaEtapasPosteriores = (registros) => {

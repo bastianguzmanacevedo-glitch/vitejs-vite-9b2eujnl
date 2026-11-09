@@ -1,0 +1,78 @@
+/* Modo oscuro: reemplaza los colores claros de Tailwind cuando <html> tiene la clase "oscuro". */
+html.oscuro {
+  color-scheme: dark;
+}
+html.oscuro body,
+html.oscuro #root {
+  background: #0b1120;
+  --border: #1e293b;
+}
+
+/* Fondos */
+html.oscuro .bg-slate-50 { background-color: #0f172a; }
+html.oscuro .bg-white { background-color: #1e293b; }
+html.oscuro .bg-slate-100 { background-color: #334155; }
+html.oscuro .bg-slate-200 { background-color: #334155; }
+html.oscuro .bg-slate-200\/60 { background-color: rgba(51, 65, 85, 0.6); }
+html.oscuro .bg-slate-50\/50 { background-color: rgba(15, 23, 42, 0.5); }
+html.oscuro .bg-slate-900 { background-color: #475569; }
+html.oscuro .focus\:bg-white:focus { background-color: #1e293b; }
+html.oscuro .hover\:bg-slate-50:hover,
+html.oscuro .hover\:bg-slate-50\/80:hover,
+html.oscuro .hover\:bg-slate-100:hover { background-color: #334155; }
+
+html.oscuro .bg-amber-50,
+html.oscuro .bg-amber-50\/60,
+html.oscuro .hover\:bg-amber-50\/30:hover { background-color: rgba(245, 158, 11, 0.12); }
+html.oscuro .bg-amber-100,
+html.oscuro .hover\:bg-amber-100:hover { background-color: rgba(245, 158, 11, 0.22); }
+html.oscuro .bg-emerald-50 { background-color: rgba(16, 185, 129, 0.12); }
+html.oscuro .bg-red-50 { background-color: rgba(239, 68, 68, 0.12); }
+html.oscuro .hover\:bg-red-100:hover { background-color: rgba(239, 68, 68, 0.22); }
+html.oscuro .bg-blue-50 { background-color: rgba(59, 130, 246, 0.14); }
+html.oscuro .bg-orange-50 { background-color: rgba(249, 115, 22, 0.14); }
+html.oscuro .bg-violet-50 { background-color: rgba(139, 92, 246, 0.16); }
+html.oscuro .bg-sky-50 { background-color: rgba(14, 165, 233, 0.14); }
+
+/* Bordes */
+html.oscuro .border-slate-100,
+html.oscuro .border-slate-200 { border-color: #334155; }
+html.oscuro .divide-slate-50 > :not([hidden]) ~ :not([hidden]),
+html.oscuro .divide-slate-100 > :not([hidden]) ~ :not([hidden]) { border-color: #1e293b; }
+html.oscuro .border-amber-100,
+html.oscuro .border-amber-200 { border-color: rgba(245, 158, 11, 0.35); }
+html.oscuro .border-emerald-100,
+html.oscuro .border-emerald-200 { border-color: rgba(16, 185, 129, 0.35); }
+html.oscuro .border-red-100,
+html.oscuro .border-red-200,
+html.oscuro .border-red-300 { border-color: rgba(239, 68, 68, 0.4); }
+html.oscuro .border-blue-200,
+html.oscuro .border-orange-200,
+html.oscuro .border-violet-200,
+html.oscuro .border-sky-200 { border-color: rgba(148, 163, 184, 0.35); }
+
+/* Textos */
+html.oscuro .text-slate-900,
+html.oscuro .text-slate-800 { color: #f1f5f9; }
+html.oscuro .text-slate-700 { color: #e2e8f0; }
+html.oscuro .text-slate-600 { color: #cbd5e1; }
+html.oscuro .text-slate-500 { color: #94a3b8; }
+html.oscuro .text-slate-400 { color: #7c8ba1; }
+html.oscuro .text-slate-300 { color: #64748b; }
+html.oscuro .text-amber-900 { color: #fcd34d; }
+html.oscuro .text-amber-800 { color: #fbbf24; }
+html.oscuro .text-amber-700 { color: #f59e0b; }
+html.oscuro .text-emerald-900,
+html.oscuro .text-emerald-800,
+html.oscuro .text-emerald-700 { color: #6ee7b7; }
+html.oscuro .text-red-700 { color: #fca5a5; }
+html.oscuro .text-blue-700 { color: #93c5fd; }
+html.oscuro .text-orange-700 { color: #fdba74; }
+html.oscuro .text-violet-700 { color: #c4b5fd; }
+html.oscuro .text-sky-700 { color: #7dd3fc; }
+html.oscuro .stroke-slate-100 { color: #334155; }
+
+/* Controles nativos */
+html.oscuro input,
+html.oscuro select,
+html.oscuro textarea { color: #e2e8f0; }
