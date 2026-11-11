@@ -907,7 +907,7 @@ export default function App() {
             </div>
 
             {vistaAdmin === 'monitoreo' && <Monitoreo />}
-            {vistaAdmin === 'lotes' && <AdminLotes registros={ots} />}
+            {vistaAdmin === 'lotes' && <AdminLotes />}
             {vistaAdmin === 'inventario' && <Inventario />}
           </div>
         )}

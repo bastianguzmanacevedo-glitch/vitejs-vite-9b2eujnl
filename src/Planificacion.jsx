@@ -5,7 +5,9 @@ import {
   doc,
   FieldPath,
   onSnapshot,
+  orderBy,
   query,
+  Timestamp,
   updateDoc,
   where,
   writeBatch,
@@ -21,8 +23,13 @@ import {
   Plus,
   Trash2,
 } from 'lucide-react';
-import { COL_PLANIFICACION, db } from './firebase';
-import { ETAPAS_POSTERIORES } from './catalogo';
+import { COL_OTS, COL_PLANIFICACION, db } from './firebase';
+import {
+  COLOR_ETAPA,
+  ETAPAS,
+  ETAPAS_POSTERIORES,
+  rangoPreset,
+} from './catalogo';
 
 // --- UTILIDADES ---
 const hoyISO = () => {
@@ -616,150 +623,420 @@ const EditorLotes = ({ ot, ingrediente, otsDelDia, onCerrar }) => {
   );
 };
 
-export function AdminLotes({ registros }) {
+// --- ADMINISTRADOR: AVANCE DE LA PLANIFICACIÓN Y LOTES ---
+
+// Nivel de cada etapa (Bodega 1, Amasado 2, Horneado 3, Packing 4, ...)
+const NIVEL_ETAPA = Object.fromEntries(ETAPAS.map((e) => [e.name, e.id]));
+const ETAPA_DE_NIVEL = Object.fromEntries(ETAPAS.map((e) => [e.id, e.name]));
+
+// Cada indicador cuenta las OT que llegaron a esa etapa o a una posterior
+const INDICADORES = [
+  { id: 'dosificadas', titulo: 'Dosificadas', detalle: 'Salieron de bodega', nivel: 1 },
+  { id: 'amasadas', titulo: 'Amasadas', detalle: 'Llegaron a Amasado', nivel: 2 },
+  { id: 'horneadas', titulo: 'Horneadas', detalle: 'Llegaron a Horneado', nivel: 3 },
+  { id: 'empacadas', titulo: 'Empacadas', detalle: 'Llegaron a Packing', nivel: 4 },
+];
+
+const fechaLarga = (iso) => {
+  const t = new Date(`${iso}T00:00:00`).toLocaleDateString('es-CL', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  });
+  return t.charAt(0).toUpperCase() + t.slice(1);
+};
+
+// Planificación de un rango de fechas, en tiempo real
+const usePlanificacionRango = (desde, hasta) => {
+  const [ots, setOts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    setLoading(true);
+    const q = query(
+      collection(db, COL_PLANIFICACION),
+      where('fecha', '>=', desde),
+      where('fecha', '<=', hasta)
+    );
+    return onSnapshot(
+      q,
+      (snap) => {
+        const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        docs.sort((a, b) =>
+          a.fecha === b.fecha ? (a.orden || 0) - (b.orden || 0) : a.fecha < b.fecha ? 1 : -1
+        );
+        setOts(docs);
+        setLoading(false);
+      },
+      (err) => {
+        console.error('Error al leer la planificación:', err);
+        setLoading(false);
+      }
+    );
+  }, [desde, hasta]);
+  return { ots, loading };
+};
+
+// Registros de las etapas desde el día anterior al rango, en tiempo real
+const useRegistrosDesde = (desde) => {
+  const [registros, setRegistros] = useState([]);
+  useEffect(() => {
+    const inicio = new Date(`${desde}T00:00:00`);
+    inicio.setDate(inicio.getDate() - 1);
+    const q = query(
+      collection(db, COL_OTS),
+      where('createdAt', '>=', Timestamp.fromDate(inicio)),
+      orderBy('createdAt', 'desc')
+    );
+    return onSnapshot(
+      q,
+      (snap) => setRegistros(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+      (err) => console.error('Error al obtener OTs:', err)
+    );
+  }, [desde]);
+  return registros;
+};
+
+export function AdminLotes() {
+  const [preset, setPreset] = useState('hoy');
+  const [[desde, hasta], setRango] = useState(() => rangoPreset('hoy'));
+  const [indicador, setIndicador] = useState('dosificadas');
+  const [mostrar, setMostrar] = useState('todas');
+  const [abiertaId, setAbiertaId] = useState(null);
+  const [editando, setEditando] = useState(null);
+
+  const { ots, loading } = usePlanificacionRango(desde, hasta);
+  const registros = useRegistrosDesde(desde);
   const posteriores = useMemo(
     () => mapaEtapasPosteriores(registros),
     [registros]
   );
-  const [fecha, setFecha] = useState(hoyISO);
-  const [abiertaId, setAbiertaId] = useState(null);
-  const [editando, setEditando] = useState(null);
-  const { ots, loading } = usePlanificacion(fecha);
-  const grupos = useMemo(() => agruparPorVariedad(ots), [ots]);
+
+  // Etapa más avanzada de cada OT. Con la checklist completa cuenta como dosificada.
+  const nivelDe = useMemo(() => {
+    const nivelRegistro = new Map();
+    registros.forEach((r) => {
+      const n = NIVEL_ETAPA[r.etapa] || 0;
+      if (n > (nivelRegistro.get(r.otNumber) || 0)) nivelRegistro.set(r.otNumber, n);
+    });
+    const mapa = new Map();
+    ots.forEach((ot) => {
+      let n = nivelRegistro.get(ot.otNumber) || 0;
+      if (n < 1 && progreso(ot).completa) n = 1;
+      mapa.set(ot.id, n);
+    });
+    return mapa;
+  }, [registros, ots]);
+
+  const conteos = useMemo(
+    () =>
+      Object.fromEntries(
+        INDICADORES.map((i) => [
+          i.id,
+          ots.filter((ot) => nivelDe.get(ot.id) >= i.nivel).length,
+        ])
+      ),
+    [ots, nivelDe]
+  );
+
+  const nivelSel = INDICADORES.find((i) => i.id === indicador).nivel;
+  const visibles = ots.filter((ot) => {
+    if (mostrar === 'todas') return true;
+    const hecha = nivelDe.get(ot.id) >= nivelSel;
+    return mostrar === 'hechas' ? hecha : !hecha;
+  });
+
+  // Agrupadas por día y, dentro de cada día, por variedad
+  const dias = useMemo(() => {
+    const m = new Map();
+    visibles.forEach((ot) => {
+      if (!m.has(ot.fecha)) m.set(ot.fecha, []);
+      m.get(ot.fecha).push(ot);
+    });
+    return [...m.entries()].map(([fecha, lista]) => ({
+      fecha,
+      grupos: agruparPorVariedad(lista),
+    }));
+  }, [visibles]);
 
   const actualizado = ots.find((o) => o.actualizado)?.actualizado;
+  const varios = desde !== hasta;
+  const textoRango = varios
+    ? `${desde.split('-').reverse().join('-')} al ${hasta.split('-').reverse().join('-')}`
+    : fechaLarga(desde);
+
+  const elegirPreset = (p) => {
+    setPreset(p);
+    setRango(rangoPreset(p));
+    setAbiertaId(null);
+    setEditando(null);
+  };
 
   return (
-    <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-6">
-      <h2 className="text-xl font-black text-slate-800">
-        Planificación y lotes
-      </h2>
-      <p className="text-sm text-slate-500 font-medium mb-5">
-        {actualizado
-          ? `Última actualización desde SAP: ${actualizado}`
-          : 'Los lotes se cargan desde SAP y se pueden corregir aquí.'}
-      </p>
-      <SelectorFecha
-        fecha={fecha}
-        onChange={(f) => {
-          setFecha(f);
-          setAbiertaId(null);
-          setEditando(null);
-        }}
-        resumen={`${ots.length} OT`}
-      />
-
-      {loading ? (
-        <p className="py-12 text-center text-slate-400 font-medium">
-          Cargando planificación...
-        </p>
-      ) : ots.length === 0 ? (
-        <p className="py-12 text-center text-slate-400 font-medium">
-          No hay planificación para esta fecha.
-        </p>
-      ) : (
-        <div className="mt-6 grid gap-6 xl:grid-cols-2 items-start">
-          {grupos.map((grupo) => (
-            <section key={grupo.nombre}>
-              <h3 className="text-sm font-black text-amber-900 border-b border-amber-100 pb-2 mb-2">
-                {grupo.nombre}
-              </h3>
-              <div className="divide-y divide-slate-100">
-                {grupo.lista.map((ot) => {
-                  const abierta = abiertaId === ot.id;
-                  const { total, hechos } = progreso(
-                    ot,
-                    posteriores.get(ot.otNumber)
-                  );
-                  return (
-                    <div key={ot.id}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setAbiertaId(abierta ? null : ot.id);
-                          setEditando(null);
-                        }}
-                        className="w-full py-3 flex items-center justify-between gap-3 text-left"
-                      >
-                        <span className="flex items-center gap-2">
-                          {abierta ? (
-                            <ChevronDown className="w-4 h-4 text-slate-400" />
-                          ) : (
-                            <ChevronRight className="w-4 h-4 text-slate-400" />
-                          )}
-                          <span className="font-mono font-black text-slate-800">
-                            OT {ot.otNumber}
-                          </span>
-                        </span>
-                        <span className="text-xs font-bold text-slate-400">
-                          {hechos} de {total} dosificadas
-                        </span>
-                      </button>
-
-                      {abierta && (
-                        <ul className="pb-4 pl-6 space-y-3">
-                          {ordenarLineas(ot.ingredientes).map((ing) => {
-                            const clave = `${ot.id}|${claveLinea(ing)}`;
-                            return (
-                              <li
-                                key={claveLinea(ing)}
-                                className="p-3 bg-slate-50 rounded-xl border border-slate-100"
-                              >
-                                <div className="flex flex-wrap justify-between gap-x-3 gap-y-1">
-                                  <span className="font-bold text-slate-800 text-sm">
-                                    {ing.nombre}{' '}
-                                    <span className="text-xs font-medium text-slate-400">
-                                      {ing.codigo}
-                                    </span>
-                                    {ing.seccion && (
-                                      <span className="ml-1.5 text-[10px] font-bold uppercase text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded">
-                                        {ing.seccion}
-                                      </span>
-                                    )}
-                                  </span>
-                                  <span className="font-black text-sm text-slate-900">
-                                    {cantidadLegible(ing.cantidad, ing.unidad)}
-                                  </span>
-                                </div>
-                                {editando === clave ? (
-                                  <EditorLotes
-                                    ot={ot}
-                                    ingrediente={ing}
-                                    otsDelDia={ots}
-                                    onCerrar={() => setEditando(null)}
-                                  />
-                                ) : (
-                                  <>
-                                    <Lotes ingrediente={ing} />
-                                    <Avisos ingrediente={ing} />
-                                    <div className="flex items-center justify-between mt-2">
-                                      <span className="text-[11px] font-bold text-amber-700">
-                                        {ing.loteManual ? 'Editado a mano' : ''}
-                                      </span>
-                                      <button
-                                        type="button"
-                                        onClick={() => setEditando(clave)}
-                                        className="text-xs font-bold text-slate-600 hover:text-slate-900 flex items-center gap-1"
-                                      >
-                                        <Pencil className="w-3.5 h-3.5" />{' '}
-                                        Editar lotes
-                                      </button>
-                                    </div>
-                                  </>
-                                )}
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-          ))}
+    <div className="space-y-6">
+      <div className="bg-white p-5 sm:p-6 rounded-3xl border border-slate-100 shadow-sm">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-black text-slate-800">
+              Planificación y lotes
+            </h2>
+            <p className="text-sm text-slate-500 font-medium">
+              {actualizado
+                ? `Última actualización desde SAP: ${actualizado}`
+                : 'Los lotes se cargan desde SAP y se pueden corregir aquí.'}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {[
+              ['hoy', 'Hoy'],
+              ['semana', 'Esta semana'],
+              ['mes', 'Este mes'],
+            ].map(([id, texto]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => elegirPreset(id)}
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-all ${
+                  preset === id
+                    ? 'bg-amber-700 text-white border-amber-700'
+                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                {texto}
+              </button>
+            ))}
+            <input
+              type="date"
+              value={preset === 'dia' ? desde : ''}
+              onChange={(e) => {
+                if (!e.target.value) return;
+                setPreset('dia');
+                setRango([e.target.value, e.target.value]);
+                setAbiertaId(null);
+                setEditando(null);
+              }}
+              aria-label="Ver un día"
+              title="Ver un día"
+              className={`px-2.5 py-2 rounded-xl border text-xs font-bold text-slate-700 ${
+                preset === 'dia'
+                  ? 'border-amber-700 bg-amber-50'
+                  : 'border-slate-200 bg-slate-50'
+              }`}
+            />
+          </div>
         </div>
-      )}
+
+        <p className="mt-5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+          OT planificadas · {textoRango}: {ots.length}
+        </p>
+        <div className="mt-2 grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {INDICADORES.map((i) => {
+            const n = conteos[i.id];
+            const pct = ots.length ? Math.round((n / ots.length) * 100) : 0;
+            const activo = indicador === i.id;
+            return (
+              <button
+                key={i.id}
+                type="button"
+                onClick={() => setIndicador(i.id)}
+                aria-pressed={activo}
+                className={`text-left p-4 rounded-2xl border transition-all ${
+                  activo
+                    ? 'border-amber-600 ring-2 ring-amber-500/30 bg-amber-50'
+                    : 'border-slate-200 bg-slate-50 hover:border-amber-400'
+                }`}
+              >
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                  {i.titulo}
+                </p>
+                <p className="text-3xl font-black text-amber-900 mt-1">
+                  {n}
+                  <span className="text-lg text-slate-400"> / {ots.length}</span>
+                </p>
+                <div className="h-2 bg-slate-100 rounded-full overflow-hidden mt-2">
+                  <div
+                    className="h-full bg-amber-600 transition-all"
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                <p className="text-xs text-slate-500 mt-1.5">
+                  {pct}% · {i.detalle}
+                </p>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm font-bold text-slate-600">
+            {visibles.length} OT
+          </p>
+          <div className="flex gap-1.5">
+            {[
+              ['todas', 'Todas'],
+              ['hechas', INDICADORES.find((i) => i.id === indicador).titulo],
+              ['pendientes', 'Pendientes'],
+            ].map(([id, texto]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setMostrar(id)}
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-all ${
+                  mostrar === id
+                    ? 'bg-slate-800 text-white border-slate-800'
+                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                {texto}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {loading ? (
+          <p className="py-12 text-center text-slate-400 font-medium">
+            Cargando planificación...
+          </p>
+        ) : ots.length === 0 ? (
+          <p className="py-12 text-center text-slate-400 font-medium">
+            No hay planificación para estas fechas.
+          </p>
+        ) : visibles.length === 0 ? (
+          <p className="py-12 text-center text-slate-400 font-medium">
+            No hay OT con este filtro.
+          </p>
+        ) : (
+          dias.map((dia) => (
+            <div key={dia.fecha} className="mt-6">
+              {varios && (
+                <h3 className="text-sm font-black text-slate-700 mb-3">
+                  {fechaLarga(dia.fecha)}
+                </h3>
+              )}
+              <div className="grid gap-6 xl:grid-cols-2 items-start">
+                {dia.grupos.map((grupo) => (
+                  <section key={grupo.nombre}>
+                    <h4 className="text-sm font-black text-amber-900 border-b border-amber-100 pb-2 mb-2 flex justify-between">
+                      {grupo.nombre}
+                      <span className="text-xs font-bold text-slate-400">
+                        {grupo.lista.length} OT
+                      </span>
+                    </h4>
+                    <div className="divide-y divide-slate-100">
+                      {grupo.lista.map((ot) => {
+                        const abierta = abiertaId === ot.id;
+                        const { total, hechos } = progreso(
+                          ot,
+                          posteriores.get(ot.otNumber)
+                        );
+                        const nivel = nivelDe.get(ot.id) || 0;
+                        const etapa = ETAPA_DE_NIVEL[nivel];
+                        return (
+                          <div key={ot.id}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAbiertaId(abierta ? null : ot.id);
+                                setEditando(null);
+                              }}
+                              className="w-full py-3 flex items-center justify-between gap-3 text-left"
+                            >
+                              <span className="flex items-center gap-2">
+                                {abierta ? (
+                                  <ChevronDown className="w-4 h-4 text-slate-400" />
+                                ) : (
+                                  <ChevronRight className="w-4 h-4 text-slate-400" />
+                                )}
+                                <span className="font-mono font-black text-slate-800">
+                                  OT {ot.otNumber}
+                                </span>
+                              </span>
+                              <span className="flex items-center gap-2">
+                                <span className="text-xs font-bold text-slate-400 hidden sm:inline">
+                                  {hechos} de {total} dosificadas
+                                </span>
+                                <span
+                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border whitespace-nowrap ${
+                                    etapa
+                                      ? COLOR_ETAPA[etapa]
+                                      : 'bg-slate-50 text-slate-500 border-slate-200'
+                                  }`}
+                                >
+                                  {etapa || 'Sin iniciar'}
+                                </span>
+                              </span>
+                            </button>
+
+                            {abierta && (
+                              <ul className="pb-4 pl-6 space-y-3">
+                                {ordenarLineas(ot.ingredientes).map((ing) => {
+                                  const clave = `${ot.id}|${claveLinea(ing)}`;
+                                  return (
+                                    <li
+                                      key={claveLinea(ing)}
+                                      className="p-3 bg-slate-50 rounded-xl border border-slate-100"
+                                    >
+                                      <div className="flex flex-wrap justify-between gap-x-3 gap-y-1">
+                                        <span className="font-bold text-slate-800 text-sm">
+                                          {ing.nombre}{' '}
+                                          <span className="text-xs font-medium text-slate-400">
+                                            {ing.codigo}
+                                          </span>
+                                          {ing.seccion && (
+                                            <span className="ml-1.5 text-[10px] font-bold uppercase text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded">
+                                              {ing.seccion}
+                                            </span>
+                                          )}
+                                        </span>
+                                        <span className="font-black text-sm text-slate-900">
+                                          {cantidadLegible(ing.cantidad, ing.unidad)}
+                                        </span>
+                                      </div>
+                                      {editando === clave ? (
+                                        <EditorLotes
+                                          ot={ot}
+                                          ingrediente={ing}
+                                          otsDelDia={ots.filter(
+                                            (o) => o.fecha === ot.fecha
+                                          )}
+                                          onCerrar={() => setEditando(null)}
+                                        />
+                                      ) : (
+                                        <>
+                                          <Lotes ingrediente={ing} />
+                                          <Avisos ingrediente={ing} />
+                                          <div className="flex items-center justify-between mt-2">
+                                            <span className="text-[11px] font-bold text-amber-700">
+                                              {ing.loteManual ? 'Editado a mano' : ''}
+                                            </span>
+                                            <button
+                                              type="button"
+                                              onClick={() => setEditando(clave)}
+                                              className="text-xs font-bold text-slate-600 hover:text-slate-900 flex items-center gap-1"
+                                            >
+                                              <Pencil className="w-3.5 h-3.5" />{' '}
+                                              Editar lotes
+                                            </button>
+                                          </div>
+                                        </>
+                                      )}
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
+                ))}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
     </div>
   );
 }

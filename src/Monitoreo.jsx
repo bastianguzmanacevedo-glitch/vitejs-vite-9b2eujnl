@@ -28,6 +28,7 @@ import {
   ETAPAS_FABRICADA,
   fechaRegistro,
   isoLocal,
+  rangoPreset,
   textoProduccion,
 } from './catalogo';
 
@@ -40,20 +41,6 @@ const sumarDias = (iso, dias) => {
   const d = new Date(`${iso}T00:00:00`);
   d.setDate(d.getDate() + dias);
   return d;
-};
-
-const rangoPreset = (preset) => {
-  const hoy = new Date();
-  const h = isoLocal(hoy);
-  if (preset === 'semana') {
-    const lunes = new Date(hoy);
-    lunes.setDate(hoy.getDate() - ((hoy.getDay() + 6) % 7));
-    return [isoLocal(lunes), h];
-  }
-  if (preset === 'mes') {
-    return [isoLocal(new Date(hoy.getFullYear(), hoy.getMonth(), 1)), h];
-  }
-  return [h, h];
 };
 
 const fechaCorta = (iso) => iso.split('-').reverse().join('-');

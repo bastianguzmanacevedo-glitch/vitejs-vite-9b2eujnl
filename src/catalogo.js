@@ -92,6 +92,22 @@ export const isoLocal = (d) => {
   return `${d.getFullYear()}-${mes}-${dia}`;
 };
 
+// Rango de fechas de calendario: hoy, esta semana (desde el lunes) o este mes,
+// siempre hasta hoy.
+export const rangoPreset = (preset) => {
+  const hoy = new Date();
+  const h = isoLocal(hoy);
+  if (preset === 'semana') {
+    const lunes = new Date(hoy);
+    lunes.setDate(hoy.getDate() - ((hoy.getDay() + 6) % 7));
+    return [isoLocal(lunes), h];
+  }
+  if (preset === 'mes') {
+    return [isoLocal(new Date(hoy.getFullYear(), hoy.getMonth(), 1)), h];
+  }
+  return [h, h];
+};
+
 // Día de un registro: la hora del servidor o, si aún no llega, la del teléfono
 export const fechaRegistro = (ot) => {
   if (ot.createdAt?.toDate) return isoLocal(ot.createdAt.toDate());
