@@ -200,6 +200,8 @@ const Avisos = ({ ingrediente }) => (
 export function PlanificacionBodega({ session, registros, onRegistrar }) {
   const [fecha, setFecha] = useState(hoyISO);
   const [seleccionId, setSeleccionId] = useState(null);
+  // Tipo de pan desplegado (uno a la vez, para encontrar rápido la variedad)
+  const [grupoAbierto, setGrupoAbierto] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
   const { ots, loading } = usePlanificacion(fecha);
 
@@ -369,11 +371,15 @@ export function PlanificacionBodega({ session, registros, onRegistrar }) {
         Planificación del día
       </h2>
       <p className="text-sm text-slate-500 mb-5">
-        Elige una OT para ver sus materias primas, cantidades y lotes.
+        Toca un producto para ver sus OT, y una OT para ver sus materias
+        primas, cantidades y lotes.
       </p>
       <SelectorFecha
         fecha={fecha}
-        onChange={setFecha}
+        onChange={(f) => {
+          setFecha(f);
+          setGrupoAbierto(null);
+        }}
         resumen={`${ots.length} OT`}
       />
 
@@ -387,16 +393,48 @@ export function PlanificacionBodega({ session, registros, onRegistrar }) {
           <p className="font-medium">No hay planificación para esta fecha.</p>
         </div>
       ) : (
-        <div className="mt-6 space-y-6">
-          {grupos.map((grupo) => (
+        <div className="mt-6 space-y-2.5">
+          {grupos.map((grupo) => {
+            const abierto = grupoAbierto === grupo.nombre;
+            const listas = grupo.lista.filter(
+              (ot) =>
+                estaRegistrada(ot) ||
+                progreso(ot, posteriores.get(ot.otNumber)).completa
+            ).length;
+            const terminado = listas === grupo.lista.length;
+            return (
             <section key={grupo.nombre}>
-              <h3 className="text-sm font-black text-amber-900 border-b border-amber-100 pb-2 mb-2.5 flex justify-between">
-                {grupo.nombre}
-                <span className="text-xs font-bold text-slate-400">
-                  {grupo.lista.length} OT
+              <button
+                type="button"
+                onClick={() => setGrupoAbierto(abierto ? null : grupo.nombre)}
+                aria-expanded={abierto}
+                className={`w-full flex items-center justify-between gap-3 p-4 rounded-2xl border text-left transition-all ${
+                  terminado
+                    ? 'bg-emerald-50 border-emerald-200'
+                    : abierto
+                    ? 'bg-amber-50 border-amber-300'
+                    : 'bg-slate-50 border-slate-200 hover:border-amber-400'
+                }`}
+              >
+                <span className="min-w-0">
+                  <span className="block text-base font-black text-amber-900">
+                    {grupo.nombre}
+                  </span>
+                  <span className="text-xs font-bold text-slate-500">
+                    {grupo.lista.length} OT · {listas} de{' '}
+                    {grupo.lista.length} dosificadas
+                  </span>
                 </span>
-              </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5">
+                {terminado ? (
+                  <CheckCircle className="w-6 h-6 text-emerald-500 shrink-0" />
+                ) : abierto ? (
+                  <ChevronDown className="w-6 h-6 text-amber-700 shrink-0" />
+                ) : (
+                  <ChevronRight className="w-6 h-6 text-slate-400 shrink-0" />
+                )}
+              </button>
+              {abierto && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5 mt-2.5 mb-2 pl-3 border-l-2 border-amber-200">
                 {grupo.lista.map((ot) => {
                   const etapaPosterior = posteriores.get(ot.otNumber);
                   const { total, hechos, completa } = progreso(
@@ -440,8 +478,10 @@ export function PlanificacionBodega({ session, registros, onRegistrar }) {
                   );
                 })}
               </div>
+              )}
             </section>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
