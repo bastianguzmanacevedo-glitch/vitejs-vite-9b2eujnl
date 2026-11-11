@@ -341,11 +341,11 @@ export default function App() {
       <div className="min-h-screen bg-slate-50 flex flex-col justify-center pb-12 sm:px-6 lg:px-8 font-sans">
         <BannerPrueba />
         <div className="mt-12 sm:mx-auto sm:w-full sm:max-w-md text-center">
-          <div className="w-32 h-32 bg-amber-700 rounded-full mx-auto flex items-center justify-center shadow-lg mb-4">
+          <div className="w-44 h-44 sm:w-48 sm:h-48 rounded-full mx-auto mb-5 p-[5px] bg-gradient-to-br from-amber-400 via-amber-700 to-amber-900 shadow-xl shadow-amber-900/25">
             <img
               src="/logo.png"
               alt="Logo EL ESPIGAL"
-              className="w-24 h-24 object-contain drop-shadow-md"
+              className="w-full h-full rounded-full bg-white object-contain ring-1 ring-black/10"
             />
           </div>
           <h2 className="text-3xl font-black text-amber-900 tracking-tight">
@@ -543,11 +543,11 @@ export default function App() {
         <BannerPrueba />
         <div className="max-w-[1920px] mx-auto px-4 lg:px-8 py-3 flex justify-between items-center">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-white/10 rounded-full flex items-center justify-center border border-white/20">
+            <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 rounded-full p-[3px] bg-gradient-to-br from-amber-200 via-amber-500 to-amber-900 shadow-md shadow-black/30">
               <img
                 src="/logo.png"
                 alt="Logo"
-                className="w-7 h-7 object-contain"
+                className="w-full h-full rounded-full bg-white object-contain"
               />
             </div>
             <div>
