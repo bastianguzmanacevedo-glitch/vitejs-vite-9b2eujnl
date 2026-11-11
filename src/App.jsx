@@ -44,6 +44,9 @@ const ADMIN_PIN = '2640';
 // qué OT de la planificación ya avanzaron); así la app carga más rápido.
 const DIAS_RECIENTES = 21;
 
+// Nombre de operario: solo letras (con tildes y ñ) y espacios, mínimo 2 letras
+const NOMBRE_VALIDO = /^\p{L}[\p{L} ]*\p{L}$/u;
+
 // N° de carro: números, o varios carros separados por guion (ej. 03-02)
 const FORMATO_CARRO = /^\d+(-\d+)*$/;
 
@@ -362,8 +365,14 @@ export default function App() {
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
-                  const name = e.target.operarioName.value;
-                  if (!name || !etapaLogin) return;
+                  const name = e.target.operarioName.value
+                    .replace(/\s+/g, ' ')
+                    .trim();
+                  if (!etapaLogin) return;
+                  if (!NOMBRE_VALIDO.test(name)) {
+                    setLoginError('Escribe tu nombre con letras, sin números');
+                    return;
+                  }
                   if (loginRequierePin && pinEtapa !== ADMIN_PIN) {
                     setLoginError('Contraseña incorrecta');
                     setPinEtapa('');
@@ -381,6 +390,16 @@ export default function App() {
                     name="operarioName"
                     type="text"
                     required
+                    autoComplete="name"
+                    autoCapitalize="words"
+                    onChange={(e) => {
+                      // Solo letras y espacios: evita escribir la OT aquí por error
+                      e.target.value = e.target.value.replace(
+                        /[^\p{L}\s]/gu,
+                        ''
+                      );
+                      setLoginError('');
+                    }}
                     placeholder="Ej. Juan Pérez"
                     className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 text-sm transition-all bg-slate-50 focus:bg-white"
                   />
@@ -421,12 +440,12 @@ export default function App() {
                       placeholder="••••"
                       className="w-full px-4 py-3 rounded-xl border border-slate-200 text-center text-lg tracking-[0.5em] font-bold bg-slate-50 focus:bg-white transition-all"
                     />
-                    {loginError && (
-                      <p className="text-xs text-red-600 font-bold text-center mt-2">
-                        {loginError}
-                      </p>
-                    )}
                   </div>
+                )}
+                {loginError && (
+                  <p className="text-xs text-red-600 font-bold text-center">
+                    {loginError}
+                  </p>
                 )}
                 <button
                   type="submit"
@@ -522,7 +541,7 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 font-sans pb-12">
       <header className="bg-amber-800 text-white shadow-lg sticky top-0 z-50">
         <BannerPrueba />
-        <div className="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
+        <div className="max-w-[1920px] mx-auto px-4 lg:px-8 py-3 flex justify-between items-center">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-white/10 rounded-full flex items-center justify-center border border-white/20">
               <img
@@ -577,11 +596,17 @@ export default function App() {
         />
       )}
 
-      <main className="max-w-7xl mx-auto px-4 mt-6">
+      <main className="max-w-[1920px] mx-auto px-4 lg:px-8 mt-6">
         {session.role === 'operario' && (
-          <div className="max-w-xl mx-auto space-y-4">
+          <div
+            className={`mx-auto space-y-4 ${
+              session.etapa === 'Bodega' && vistaBodega === 'planificacion'
+                ? 'max-w-xl lg:max-w-6xl'
+                : 'max-w-xl'
+            }`}
+          >
             {session.etapa === 'Bodega' && (
-              <div className="grid grid-cols-2 gap-1.5 p-1.5 bg-slate-200/60 rounded-2xl">
+              <div className="grid grid-cols-2 gap-1.5 p-1.5 bg-slate-200/60 rounded-2xl max-w-xl mx-auto">
                 {[
                   ['planificacion', 'Planificación', ClipboardList],
                   ['registrar', 'Registrar OT', Camera],

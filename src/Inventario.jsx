@@ -232,7 +232,8 @@ export default function Inventario() {
           No hay artículos con estos filtros.
         </p>
       ) : (
-        porGrupo.map(([nombreGrupo, lista]) => (
+        <div className="grid 2xl:grid-cols-2 items-start">
+        {porGrupo.map(([nombreGrupo, lista]) => (
           <section key={nombreGrupo} className="px-4 sm:px-6 py-4">
             <h3 className="text-sm font-black text-amber-900 border-b border-amber-100 pb-2 mb-1 flex justify-between">
               {nombreGrupo}
@@ -337,7 +338,8 @@ export default function Inventario() {
               })}
             </ul>
           </section>
-        ))
+        ))}
+        </div>
       )}
     </div>
   );

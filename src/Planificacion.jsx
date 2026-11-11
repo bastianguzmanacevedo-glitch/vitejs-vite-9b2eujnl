@@ -389,7 +389,7 @@ export function PlanificacionBodega({ session, registros, onRegistrar }) {
                   {grupo.lista.length} OT
                 </span>
               </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5">
                 {grupo.lista.map((ot) => {
                   const etapaPosterior = posteriores.get(ot.otNumber);
                   const { total, hechos, completa } = progreso(
@@ -658,7 +658,7 @@ export function AdminLotes({ registros }) {
           No hay planificación para esta fecha.
         </p>
       ) : (
-        <div className="mt-6 space-y-6">
+        <div className="mt-6 grid gap-6 xl:grid-cols-2 items-start">
           {grupos.map((grupo) => (
             <section key={grupo.nombre}>
               <h3 className="text-sm font-black text-amber-900 border-b border-amber-100 pb-2 mb-2">
