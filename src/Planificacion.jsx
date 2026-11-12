@@ -674,6 +674,8 @@ const INDICADORES = [
   { id: 'dosificadas', titulo: 'Dosificadas', detalle: 'Salieron de bodega', nivel: 1 },
   { id: 'amasadas', titulo: 'Amasadas', detalle: 'Llegaron a Amasado', nivel: 2 },
   { id: 'horneadas', titulo: 'Horneadas', detalle: 'Llegaron a Horneado', nivel: 3 },
+  // No depende de la etapa: en el turno de tarde no hay control de calidad
+  { id: 'liberadas', titulo: 'Liberadas', detalle: 'Liberación en horno', liberacion: true },
   { id: 'empacadas', titulo: 'Empacadas', detalle: 'Llegaron a Packing', nivel: 4 },
 ];
 
@@ -768,22 +770,37 @@ export function AdminLotes() {
     return mapa;
   }, [registros, ots]);
 
-  const conteos = useMemo(
+  // OT liberadas por control de calidad en horno (todo resultado menos el
+  // rechazo al 100%)
+  const liberadas = useMemo(
     () =>
-      Object.fromEntries(
-        INDICADORES.map((i) => [
-          i.id,
-          ots.filter((ot) => nivelDe.get(ot.id) >= i.nivel).length,
-        ])
+      new Set(
+        registros
+          .filter(
+            (r) =>
+              r.etapa === 'Horneado' &&
+              r.resultadoCalidad &&
+              r.resultadoCalidad !== 'rechazada'
+          )
+          .map((r) => r.otNumber)
       ),
-    [ots, nivelDe]
+    [registros]
   );
 
-  const nivelSel = INDICADORES.find((i) => i.id === indicador).nivel;
-  const tituloIndicador = INDICADORES.find((i) => i.id === indicador).titulo;
+  const cumple = (ot, ind) =>
+    ind.liberacion
+      ? liberadas.has(ot.otNumber)
+      : (nivelDe.get(ot.id) || 0) >= ind.nivel;
+
+  const conteos = Object.fromEntries(
+    INDICADORES.map((i) => [i.id, ots.filter((ot) => cumple(ot, i)).length])
+  );
+
+  const indicadorSel = INDICADORES.find((i) => i.id === indicador);
+  const tituloIndicador = indicadorSel.titulo;
   const visibles = ots.filter((ot) => {
     if (mostrar === 'todas') return true;
-    const hecha = nivelDe.get(ot.id) >= nivelSel;
+    const hecha = cumple(ot, indicadorSel);
     return mostrar === 'hechas' ? hecha : !hecha;
   });
 
@@ -872,7 +889,7 @@ export function AdminLotes() {
         <p className="mt-5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
           OT planificadas · {textoRango}: {ots.length}
         </p>
-        <div className="mt-2 grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="mt-2 grid grid-cols-2 lg:grid-cols-5 gap-3">
           {INDICADORES.map((i) => {
             const n = conteos[i.id];
             const pct = ots.length ? Math.round((n / ots.length) * 100) : 0;
@@ -963,7 +980,7 @@ export function AdminLotes() {
                   const claveGrupo = `${dia.fecha}|${grupo.nombre}`;
                   const grupoAbiertoAhora = grupoAbierto === claveGrupo;
                   const hechas = grupo.lista.filter(
-                    (ot) => (nivelDe.get(ot.id) || 0) >= nivelSel
+                    (ot) => cumple(ot, indicadorSel)
                   ).length;
                   const terminado = hechas === grupo.lista.length;
                   return (
