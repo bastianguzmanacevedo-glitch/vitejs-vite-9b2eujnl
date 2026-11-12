@@ -47,16 +47,16 @@ export const ETAPAS = [
   },
   {
     id: 5,
-    name: 'Control SAP',
-    icon: FileCheck,
-    description: 'N° de OF PT, lo ingresa el administrador',
-    soloAdmin: true,
-  },
-  {
-    id: 6,
     name: 'Control de calidad',
     icon: ClipboardCheck,
     description: 'Revisión final de calidad',
+  },
+  {
+    id: 6,
+    name: 'Control SAP',
+    icon: FileCheck,
+    description: 'N° de OF PT y foto definitiva, lo ingresa el administrador',
+    soloAdmin: true,
   },
 ];
 
@@ -134,17 +134,19 @@ export const RESULTADOS_CALIDAD = {
   rechazada: 'Rechazada al 100%',
 };
 
-export const textoProduccion = (ot) => {
+export const textoProduccion = (ot, { conCalidad = true } = {}) => {
   const partes = [];
   const tipo = ot.tipoCantidad || 'unidades';
   if (ot.cantidadProducida != null) {
     partes.push(`${ot.cantidadProducida} ${tipo}`);
   }
   if (ot.horneado) partes.push('Horneado');
-  if (ot.cantidadCorregida != null) {
+  if (conCalidad && ot.cantidadCorregida != null) {
     partes.push(`corregido a ${ot.cantidadCorregida} ${tipo}`);
   }
-  if (ot.resultadoCalidad === 'parcial') {
+  if (!conCalidad) {
+    // Sin liberación en horno ni mermas
+  } else if (ot.resultadoCalidad === 'parcial') {
     partes.push(`${ot.unidadesRechazadas} ${tipo} rechazadas`);
   } else if (ot.resultadoCalidad === 'seleccion') {
     partes.push('para selección');
@@ -152,7 +154,7 @@ export const textoProduccion = (ot) => {
     partes.push('rechazada al 100%');
   }
   if (ot.cajas != null) partes.push(`${ot.cajas} cajas`);
-  if (ot.mermas != null) partes.push(`${ot.mermas} mermas`);
+  if (conCalidad && ot.mermas != null) partes.push(`${ot.mermas} mermas`);
   if (ot.ofPT) partes.push(`OF PT ${ot.ofPT}`);
   return partes.join(' / ');
 };

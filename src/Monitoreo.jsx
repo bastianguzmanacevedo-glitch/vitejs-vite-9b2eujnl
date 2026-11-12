@@ -34,6 +34,48 @@ import {
 } from './catalogo';
 
 const POR_PAGINA = 45;
+
+const COLOR_LIBERACION = {
+  aprobada: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  parcial: 'bg-amber-50 text-amber-800 border-amber-200',
+  seleccion: 'bg-amber-50 text-amber-800 border-amber-200',
+  rechazada: 'bg-red-50 text-red-700 border-red-200',
+};
+
+// Control de calidad en horno: resultado, unidades corregidas y quién revisó
+const Liberacion = ({ ot }) => {
+  if (!ot.resultadoCalidad) {
+    return <span className="text-slate-300 font-bold">-</span>;
+  }
+  const tipo = ot.tipoCantidad || 'unidades';
+  return (
+    <div className="space-y-1 whitespace-nowrap">
+      <span
+        className={`inline-flex px-3 py-1.5 rounded-lg text-xs font-bold border ${
+          COLOR_LIBERACION[ot.resultadoCalidad] ||
+          'bg-slate-50 text-slate-700 border-slate-200'
+        }`}
+      >
+        {ot.resultadoCalidad === 'aprobada'
+          ? 'Liberada'
+          : ot.resultadoCalidad === 'parcial'
+          ? `${ot.unidadesRechazadas} ${tipo} rechazadas`
+          : RESULTADOS_CALIDAD[ot.resultadoCalidad]}
+      </span>
+      {ot.cantidadCorregida != null && (
+        <p className="text-xs font-bold text-slate-600">
+          Corregido a {ot.cantidadCorregida} {tipo}
+        </p>
+      )}
+      {ot.revisadoPor && (
+        <p className="text-[11px] text-slate-400 font-medium">
+          {ot.revisadoPor}
+          {ot.revisadoHora ? ` · ${ot.revisadoHora}` : ''}
+        </p>
+      )}
+    </div>
+  );
+};
 // Una OT planificada puede avanzar de etapa unos días después: se cargan
 // estos días extra para no dejarla fuera del conteo de fabricadas.
 const DIAS_EXTRA = 3;
@@ -223,7 +265,7 @@ export default function Monitoreo() {
       'OF PT',
       'Rechazada 100%',
       'Corregido en horno',
-      'Calidad en horno',
+      'Liberación en horno',
       'Rechazadas en horno',
       'Revisado por',
       'Mermas',
@@ -472,6 +514,8 @@ export default function Monitoreo() {
                 <th className="px-6 py-4">Variedad / Producto</th>
                 <th className="px-6 py-4">N° de carro</th>
                 <th className="px-6 py-4">Producción</th>
+                <th className="px-6 py-4">Liberación en horno</th>
+                <th className="px-6 py-4">Mermas</th>
                 <th className="px-6 py-4">Etapa</th>
                 <th className="px-6 py-4">Operario</th>
                 <th className="px-6 py-4">Fecha/Hora</th>
@@ -483,7 +527,7 @@ export default function Monitoreo() {
               {loading ? (
                 <tr>
                   <td
-                    colSpan="9"
+                    colSpan="11"
                     className="px-6 py-12 text-center text-slate-400 font-medium"
                   >
                     Cargando registros sincronizados...
@@ -492,7 +536,7 @@ export default function Monitoreo() {
               ) : visibles.length === 0 ? (
                 <tr>
                   <td
-                    colSpan="9"
+                    colSpan="11"
                     className="px-6 py-12 text-center text-slate-400 font-medium"
                   >
                     No hay registros con estos filtros.
@@ -524,9 +568,21 @@ export default function Monitoreo() {
                           Rechazada 100%
                         </span>
                       ) : (
-                        textoProduccion(ot) || (
+                        textoProduccion(ot, { conCalidad: false }) || (
                           <span className="text-slate-300">-</span>
                         )
+                      )}
+                    </td>
+                    <td className="px-6 py-4">
+                      <Liberacion ot={ot} />
+                    </td>
+                    <td className="px-6 py-4 font-bold text-slate-700 whitespace-nowrap">
+                      {ot.mermas != null ? (
+                        <span className="inline-flex px-3 py-1.5 rounded-lg text-xs font-bold bg-orange-50 text-orange-700 border border-orange-200">
+                          {ot.mermas} {ot.tipoCantidad || 'unidades'}
+                        </span>
+                      ) : (
+                        <span className="text-slate-300">-</span>
                       )}
                     </td>
                     <td className="px-6 py-4">
