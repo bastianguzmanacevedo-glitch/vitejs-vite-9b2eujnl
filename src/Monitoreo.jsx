@@ -515,7 +515,6 @@ export default function Monitoreo() {
                 <th className="px-6 py-4">N° de carro</th>
                 <th className="px-6 py-4">Producción</th>
                 <th className="px-6 py-4">Liberación en horno</th>
-                <th className="px-6 py-4">Mermas</th>
                 <th className="px-6 py-4">Etapa</th>
                 <th className="px-6 py-4">Operario</th>
                 <th className="px-6 py-4">Fecha/Hora</th>
@@ -527,7 +526,7 @@ export default function Monitoreo() {
               {loading ? (
                 <tr>
                   <td
-                    colSpan="11"
+                    colSpan="10"
                     className="px-6 py-12 text-center text-slate-400 font-medium"
                   >
                     Cargando registros sincronizados...
@@ -536,7 +535,7 @@ export default function Monitoreo() {
               ) : visibles.length === 0 ? (
                 <tr>
                   <td
-                    colSpan="11"
+                    colSpan="10"
                     className="px-6 py-12 text-center text-slate-400 font-medium"
                   >
                     No hay registros con estos filtros.
@@ -575,15 +574,6 @@ export default function Monitoreo() {
                     </td>
                     <td className="px-6 py-4">
                       <Liberacion ot={ot} />
-                    </td>
-                    <td className="px-6 py-4 font-bold text-slate-700 whitespace-nowrap">
-                      {ot.mermas != null ? (
-                        <span className="inline-flex px-3 py-1.5 rounded-lg text-xs font-bold bg-orange-50 text-orange-700 border border-orange-200">
-                          {ot.mermas} {ot.tipoCantidad || 'unidades'}
-                        </span>
-                      ) : (
-                        <span className="text-slate-300">-</span>
-                      )}
                     </td>
                     <td className="px-6 py-4">
                       <span
