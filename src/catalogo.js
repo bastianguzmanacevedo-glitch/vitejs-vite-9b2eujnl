@@ -116,10 +116,10 @@ export const fechaRegistro = (ot) => {
   return isoLocal(new Date());
 };
 
-// Control de calidad: Yara y Katherine Núñez (Katy). En Horneado entran con
-// la contraseña y pueden corregir unidades y marcar rechazos.
+// Control de calidad: Yara, Katherine Núñez (Katy) y Carolina (Caro). En
+// Horneado entran con la contraseña y pueden corregir unidades y marcar rechazos.
 export const esPersonaCalidad = (nombre) =>
-  /^(yara|katy|kathy|katherine|katherin|katerine|catherine)\b/.test(
+  /^(yara|katy|kathy|katherine|katherin|katerine|catherine|caro|carolina)\b/.test(
     String(nombre || '')
       .normalize('NFD')
       .replace(/[̀-ͯ]/g, '')
