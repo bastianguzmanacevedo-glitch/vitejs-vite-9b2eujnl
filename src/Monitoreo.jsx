@@ -30,6 +30,7 @@ import {
   isoLocal,
   rangoPreset,
   textoProduccion,
+  RESULTADOS_CALIDAD,
 } from './catalogo';
 
 const POR_PAGINA = 45;
@@ -221,6 +222,11 @@ export default function Monitoreo() {
       'Cajas',
       'OF PT',
       'Rechazada 100%',
+      'Corregido en horno',
+      'Calidad en horno',
+      'Rechazadas en horno',
+      'Revisado por',
+      'Mermas',
       'Etapa',
       'Operario',
       'Fecha',
@@ -237,6 +243,11 @@ export default function Monitoreo() {
       ot.cajas,
       ot.ofPT,
       ot.rechazada100 ? 'Si' : '',
+      ot.cantidadCorregida,
+      RESULTADOS_CALIDAD[ot.resultadoCalidad] || '',
+      ot.unidadesRechazadas,
+      ot.revisadoPor,
+      ot.mermas,
       ot.etapa,
       ot.operario,
       ot.fechaStr,

@@ -743,6 +743,7 @@ export function AdminLotes() {
   const [mostrar, setMostrar] = useState('todas');
   const [abiertaId, setAbiertaId] = useState(null);
   const [editando, setEditando] = useState(null);
+  const [grupoAbierto, setGrupoAbierto] = useState(null);
 
   const { ots, loading } = usePlanificacionRango(desde, hasta);
   const registros = useRegistrosDesde(desde);
@@ -779,6 +780,7 @@ export function AdminLotes() {
   );
 
   const nivelSel = INDICADORES.find((i) => i.id === indicador).nivel;
+  const tituloIndicador = INDICADORES.find((i) => i.id === indicador).titulo;
   const visibles = ots.filter((ot) => {
     if (mostrar === 'todas') return true;
     const hecha = nivelDe.get(ot.id) >= nivelSel;
@@ -807,6 +809,7 @@ export function AdminLotes() {
   const elegirPreset = (p) => {
     setPreset(p);
     setRango(rangoPreset(p));
+    setGrupoAbierto(null);
     setAbiertaId(null);
     setEditando(null);
   };
@@ -851,6 +854,7 @@ export function AdminLotes() {
                 if (!e.target.value) return;
                 setPreset('dia');
                 setRango([e.target.value, e.target.value]);
+                setGrupoAbierto(null);
                 setAbiertaId(null);
                 setEditando(null);
               }}
@@ -954,16 +958,51 @@ export function AdminLotes() {
                   {fechaLarga(dia.fecha)}
                 </h3>
               )}
-              <div className="grid gap-6 xl:grid-cols-2 items-start">
-                {dia.grupos.map((grupo) => (
+              <div className="grid gap-2.5 xl:grid-cols-2 items-start">
+                {dia.grupos.map((grupo) => {
+                  const claveGrupo = `${dia.fecha}|${grupo.nombre}`;
+                  const grupoAbiertoAhora = grupoAbierto === claveGrupo;
+                  const hechas = grupo.lista.filter(
+                    (ot) => (nivelDe.get(ot.id) || 0) >= nivelSel
+                  ).length;
+                  const terminado = hechas === grupo.lista.length;
+                  return (
                   <section key={grupo.nombre}>
-                    <h4 className="text-sm font-black text-amber-900 border-b border-amber-100 pb-2 mb-2 flex justify-between">
-                      {grupo.nombre}
-                      <span className="text-xs font-bold text-slate-400">
-                        {grupo.lista.length} OT
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setGrupoAbierto(grupoAbiertoAhora ? null : claveGrupo);
+                        setAbiertaId(null);
+                        setEditando(null);
+                      }}
+                      aria-expanded={grupoAbiertoAhora}
+                      className={`w-full flex items-center justify-between gap-3 p-4 rounded-2xl border text-left transition-all ${
+                        terminado
+                          ? 'bg-emerald-50 border-emerald-200'
+                          : grupoAbiertoAhora
+                          ? 'bg-amber-50 border-amber-300'
+                          : 'bg-slate-50 border-slate-200 hover:border-amber-400'
+                      }`}
+                    >
+                      <span className="min-w-0">
+                        <span className="block text-base font-black text-amber-900">
+                          {grupo.nombre}
+                        </span>
+                        <span className="text-xs font-bold text-slate-500">
+                          {grupo.lista.length} OT · {hechas} de{' '}
+                          {grupo.lista.length} {tituloIndicador.toLowerCase()}
+                        </span>
                       </span>
-                    </h4>
-                    <div className="divide-y divide-slate-100">
+                      {terminado ? (
+                        <CheckCircle className="w-6 h-6 text-emerald-500 shrink-0" />
+                      ) : grupoAbiertoAhora ? (
+                        <ChevronDown className="w-6 h-6 text-amber-700 shrink-0" />
+                      ) : (
+                        <ChevronRight className="w-6 h-6 text-slate-400 shrink-0" />
+                      )}
+                    </button>
+                    {grupoAbiertoAhora && (
+                    <div className="divide-y divide-slate-100 mt-2 mb-2 pl-3 border-l-2 border-amber-200">
                       {grupo.lista.map((ot) => {
                         const abierta = abiertaId === ot.id;
                         const { total, hechos } = progreso(
@@ -1070,8 +1109,10 @@ export function AdminLotes() {
                         );
                       })}
                     </div>
+                    )}
                   </section>
-                ))}
+                  );
+                })}
               </div>
             </div>
           ))

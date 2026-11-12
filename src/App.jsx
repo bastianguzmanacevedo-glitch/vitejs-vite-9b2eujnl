@@ -9,6 +9,7 @@ import {
   serverTimestamp,
   where,
   getDocs,
+  getDoc,
   updateDoc,
   doc,
   Timestamp,
@@ -30,12 +31,25 @@ import {
   ClipboardList,
   Settings,
 } from 'lucide-react';
-import { CARPETA_FOTOS, COL_OTS, db, ES_PRUEBA, storage } from './firebase';
+import {
+  CARPETA_FOTOS,
+  COL_OTS,
+  COL_PLANIFICACION,
+  db,
+  ES_PRUEBA,
+  storage,
+} from './firebase';
 import { AdminLotes, PlanificacionBodega } from './Planificacion';
 import Monitoreo from './Monitoreo';
 import Inventario from './Inventario';
 import Ajustes from './Ajustes';
-import { CATALOGO_PAN, CATEGORIAS_EN_LATAS, ETAPAS } from './catalogo';
+import {
+  CATALOGO_PAN,
+  CATEGORIAS_EN_LATAS,
+  ETAPAS,
+  esPersonaCalidad,
+  RESULTADOS_CALIDAD,
+} from './catalogo';
 
 // Contraseña numérica del Panel Administrador SAP (y de la etapa Control SAP)
 const ADMIN_PIN = '2640';
@@ -83,6 +97,77 @@ const ESTILO_INPUT =
 const ESTILO_LABEL =
   'block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5';
 
+// Datos que la OT trae de Amasado (y de Horneado), para no volver a escribirlos
+const TarjetaOt = ({ info, amasado, horneado, origen }) => {
+  if (!info) {
+    return (
+      <p className="text-xs text-slate-400 font-medium -mt-2">
+        Al ingresar la OT aparecerán la variedad, el carro y lo producido en
+        Amasado.
+      </p>
+    );
+  }
+  if (info.cargando) {
+    return (
+      <p className="text-xs text-slate-400 font-medium -mt-2">Buscando la OT...</p>
+    );
+  }
+  if (!origen) {
+    return (
+      <div className="p-4 bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-2xl flex items-center gap-3">
+        <AlertTriangle className="w-5 h-5 shrink-0 text-amber-600" />
+        No se encontró esta OT en Amasado ni en la planificación. Revisa el
+        número.
+      </div>
+    );
+  }
+  const tipo = CATEGORIAS_EN_LATAS.includes(origen.categoria)
+    ? 'latas'
+    : 'unidades';
+  const filas = [
+    ['Variedad', `${origen.categoria} · ${origen.variedad}`],
+    ['N° de carro', amasado?.batches || '—'],
+    [
+      tipo === 'latas' ? 'Latas en Amasado' : 'Unidades en Amasado',
+      amasado?.cantidadProducida ?? '—',
+    ],
+  ];
+  if (horneado?.cantidadCorregida != null) {
+    filas.push([
+      'Corregido en horno',
+      `${horneado.cantidadCorregida} ${tipo}`,
+    ]);
+  }
+  if (horneado?.resultadoCalidad) {
+    filas.push([
+      'Calidad en horno',
+      horneado.resultadoCalidad === 'parcial'
+        ? `${horneado.unidadesRechazadas} ${tipo} rechazadas`
+        : RESULTADOS_CALIDAD[horneado.resultadoCalidad],
+    ]);
+  }
+  return (
+    <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50">
+      {!amasado && (
+        <p className="text-xs font-bold text-amber-700 mb-2">
+          Aún no está registrada en Amasado: la variedad viene de la
+          planificación.
+        </p>
+      )}
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-2">
+        {filas.map(([titulo, valor]) => (
+          <div key={titulo} className={titulo === 'Variedad' ? 'col-span-2' : ''}>
+            <dt className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+              {titulo}
+            </dt>
+            <dd className="text-sm font-black text-slate-800">{valor}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+};
+
 export default function App() {
   const [session, setSession] = useState(null);
   const [ots, setOts] = useState([]);
@@ -96,6 +181,13 @@ export default function App() {
   const [cajas, setCajas] = useState('');
   const [ofPT, setOfPT] = useState('');
   const [rechazada100, setRechazada100] = useState(false);
+  const [horneadoOk, setHorneadoOk] = useState(false);
+  const [cantidadCorregida, setCantidadCorregida] = useState('');
+  const [resultadoCalidad, setResultadoCalidad] = useState('aprobada');
+  const [unidadesRechazadas, setUnidadesRechazadas] = useState('');
+  const [mermas, setMermas] = useState('');
+  // Lo que ya se sabe de la OT ingresada (registros y planificación)
+  const [infoOt, setInfoOt] = useState(null);
   const [fotoBase64, setFotoBase64] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -103,6 +195,7 @@ export default function App() {
 
   // Acceso
   const [etapaLogin, setEtapaLogin] = useState('');
+  const [nombreLogin, setNombreLogin] = useState('');
   const [pinEtapa, setPinEtapa] = useState('');
   const [loginError, setLoginError] = useState('');
   const [showPinAdmin, setShowPinAdmin] = useState(false);
@@ -129,10 +222,34 @@ export default function App() {
 
   const etapaActual = session?.etapa;
   const esControlSap = etapaActual === 'Control SAP';
-  const tipoCantidad = CATEGORIAS_EN_LATAS.includes(categoriaSel)
+  // Yara o Katy en Horneado: control de calidad en horno (con contraseña)
+  const esCalidadHorno = etapaActual === 'Horneado' && !!session?.calidad;
+  // Bodega y Amasado ingresan pan y carro; las etapas siguientes los toman de Amasado
+  const pideCarro = etapaActual === 'Bodega' || etapaActual === 'Amasado';
+  const usaDatosAmasado = !!etapaActual && !pideCarro;
+
+  const infoVigente =
+    infoOt && infoOt.otNumber === numOt.trim() ? infoOt : null;
+  const regAmasado = infoVigente?.registros.find((r) => r.etapa === 'Amasado');
+  const regHorneado = infoVigente?.registros.find((r) => r.etapa === 'Horneado');
+  const datosOt =
+    regAmasado ||
+    infoVigente?.registros.find(
+      (r) => r.categoria && r.categoria !== 'No especificada'
+    ) ||
+    (infoVigente?.plan?.categoria ? infoVigente.plan : null);
+
+  const categoriaEfectiva = usaDatosAmasado ? datosOt?.categoria : categoriaSel;
+  const tipoCantidad = CATEGORIAS_EN_LATAS.includes(categoriaEfectiva)
     ? 'latas'
     : 'unidades';
-  const loginRequierePin = ETAPAS.find((e) => e.name === etapaLogin)?.soloAdmin;
+  // Moldes, panes de campo y hogazas se cuentan por unidad
+  const esUnitario = tipoCantidad === 'unidades';
+
+  const loginCalidadHorno =
+    etapaLogin === 'Horneado' && esPersonaCalidad(nombreLogin);
+  const loginRequierePin =
+    ETAPAS.find((e) => e.name === etapaLogin)?.soloAdmin || loginCalidadHorno;
 
   // Al entrar a un puesto, recupera la última variedad usada en ese puesto
   useEffect(() => {
@@ -146,6 +263,69 @@ export default function App() {
         : ''
     );
   }, [etapaActual]);
+
+  // Al escribir la OT, trae sus registros y su planificación
+  useEffect(() => {
+    const ot = numOt.trim();
+    if (session?.role !== 'operario' || !/^\d{3,}$/.test(ot)) return;
+    let cancelado = false;
+    const t = setTimeout(async () => {
+      setInfoOt({ otNumber: ot, cargando: true, registros: [], plan: null });
+      try {
+        const [regs, plan] = await Promise.all([
+          getDocs(query(collection(db, COL_OTS), where('otNumber', '==', ot))),
+          getDoc(doc(db, COL_PLANIFICACION, ot)),
+        ]);
+        if (cancelado) return;
+        const registros = regs.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .sort(
+            (a, b) =>
+              (b.createdAt?.toMillis?.() || 0) -
+              (a.createdAt?.toMillis?.() || 0)
+          );
+        setInfoOt({
+          otNumber: ot,
+          cargando: false,
+          registros,
+          plan: plan.exists() ? plan.data() : null,
+        });
+      } catch (err) {
+        console.error('No se pudo buscar la OT:', err);
+        if (!cancelado) {
+          setInfoOt({ otNumber: ot, cargando: false, registros: [], plan: null });
+        }
+      }
+    }, 400);
+    return () => {
+      cancelado = true;
+      clearTimeout(t);
+    };
+  }, [numOt, session]);
+
+  // Amasado: la variedad sale de la planificación de la OT
+  useEffect(() => {
+    const plan = infoOt?.plan;
+    if (etapaActual !== 'Amasado' || !plan || !CATALOGO_PAN[plan.categoria]) {
+      return;
+    }
+    setCategoriaSel(plan.categoria);
+    setVariedadSel(
+      CATALOGO_PAN[plan.categoria].includes(plan.variedad) ? plan.variedad : ''
+    );
+  }, [infoOt, etapaActual]);
+
+  // Control de calidad en horno: parte con lo contado en Amasado
+  useEffect(() => {
+    if (!esCalidadHorno || !infoOt || infoOt.cargando) return;
+    const amasado = infoOt.registros.find((r) => r.etapa === 'Amasado');
+    const horneado = infoOt.registros.find((r) => r.etapa === 'Horneado');
+    setCantidadCorregida(
+      String(horneado?.cantidadCorregida ?? amasado?.cantidadProducida ?? '')
+    );
+    setResultadoCalidad(horneado?.resultadoCalidad || 'aprobada');
+    setUnidadesRechazadas(String(horneado?.unidadesRechazadas ?? ''));
+  }, [infoOt, esCalidadHorno]);
 
   // Registros recientes (el panel de monitoreo carga los suyos por fecha)
   useEffect(() => {
@@ -215,79 +395,168 @@ export default function App() {
     }
   };
 
+  const limpiarFormulario = () => {
+    setNumOt('');
+    setFotoBase64(null);
+    setBatchCount('1');
+    setCantidadProducida('');
+    setCajas('');
+    setMermas('');
+    setOfPT('');
+    setRechazada100(false);
+    setHorneadoOk(false);
+    setCantidadCorregida('');
+    setResultadoCalidad('aprobada');
+    setUnidadesRechazadas('');
+    setInfoOt(null);
+  };
+
   const handleSubmitRegistro = async (e) => {
     e.preventDefault();
     const otNumber = numOt.trim();
     const carro = String(batchCount).trim();
+    const etapa = session.etapa;
     if (!otNumber) return setErrorMsg('Ingresa el número de OT');
     if (esControlSap && !ofPT.trim()) {
       return setErrorMsg('Ingresa el N° de OF PT');
     }
-    if (!esControlSap && !FORMATO_CARRO.test(carro)) {
+    if (pideCarro && !FORMATO_CARRO.test(carro)) {
       return setErrorMsg('El N° de carro debe ser un número o carros separados por guion, ej. 03-02');
     }
-    if (session.etapa === 'Amasado' && (!categoriaSel || !variedadSel)) {
+    if (etapa === 'Amasado' && (!categoriaSel || !variedadSel)) {
       return setErrorMsg('Selecciona el tipo de pan y la variedad');
+    }
+    if (etapa === 'Horneado' && !esCalidadHorno && !horneadoOk) {
+      return setErrorMsg('Marca la casilla "Horneado" para confirmar');
+    }
+    if (esCalidadHorno) {
+      if (esUnitario && (cantidadCorregida === '' || Number(cantidadCorregida) < 0)) {
+        return setErrorMsg('Ingresa las unidades producidas');
+      }
+      if (resultadoCalidad === 'parcial' && !(Number(unidadesRechazadas) > 0)) {
+        return setErrorMsg('Ingresa cuántas unidades se rechazaron');
+      }
     }
 
     setUploading(true);
     setErrorMsg('');
     setSuccessMsg('');
 
+    const ahora = new Date();
+    const fechaStr = ahora.toLocaleDateString('es-CL');
+    const horaStr = ahora.toLocaleTimeString('es-CL', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
     try {
       // Todos los registros previos de esta OT (en cualquier etapa)
       const previos = await getDocs(
         query(collection(db, COL_OTS), where('otNumber', '==', otNumber))
       );
-
-      // Bloquea OTs duplicadas en la misma etapa
-      if (previos.docs.some((d) => d.data().etapa === session.etapa)) {
-        setErrorMsg(
-          `La OT #${otNumber} ya fue registrada en la etapa ${session.etapa}.`
+      const datosPrevios = previos.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .sort(
+          (a, b) =>
+            (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0)
         );
+      const previoAmasado = datosPrevios.find((d) => d.etapa === 'Amasado');
+      const previoHorneado = datosPrevios.find((d) => d.etapa === 'Horneado');
+
+      // Control de calidad en horno: unidades corregidas y rechazos
+      let datosCalidad = {};
+      if (esCalidadHorno) {
+        const contadas = previoAmasado?.cantidadProducida;
+        const corregida = esUnitario ? Number(cantidadCorregida) : null;
+        datosCalidad = {
+          resultadoCalidad,
+          unidadesRechazadas:
+            resultadoCalidad === 'parcial' ? Number(unidadesRechazadas) : null,
+          cantidadCorregida:
+            corregida != null && corregida !== contadas ? corregida : null,
+          revisadoPor: session.user,
+          revisadoFecha: fechaStr,
+          revisadoHora: horaStr,
+        };
+      }
+
+      // Si el horno ya registró la OT, control de calidad completa ese registro
+      if (esCalidadHorno && previoHorneado) {
+        await updateDoc(doc(db, COL_OTS, previoHorneado.id), datosCalidad);
+        setSuccessMsg(
+          `¡Control de calidad en horno guardado para la OT #${otNumber}!`
+        );
+        limpiarFormulario();
         return;
       }
 
-      // La foto es opcional (Control SAP no lleva foto)
+      // Bloquea OTs duplicadas en la misma etapa
+      if (datosPrevios.some((d) => d.etapa === etapa)) {
+        setErrorMsg(`La OT #${otNumber} ya fue registrada en la etapa ${etapa}.`);
+        return;
+      }
+
+      // Solo Control SAP lleva foto (opcional): la foto definitiva de la OT
       let photoURL = null;
-      if (fotoBase64 && !esControlSap) {
+      if (fotoBase64 && esControlSap) {
         const photoRef = ref(
           storage,
-          `${CARPETA_FOTOS}/${otNumber}_${session.etapa}_${Date.now()}.jpg`
+          `${CARPETA_FOTOS}/${otNumber}_${etapa}_${Date.now()}.jpg`
         );
         await uploadString(photoRef, fotoBase64, 'data_url');
         photoURL = await getDownloadURL(photoRef);
       }
 
-      // Datos propios de cada etapa
+      // Pan y carro: en Bodega y Amasado se ingresan; después se copian de
+      // Amasado (o del último registro, o de la planificación).
       let categoria = categoriaSel || 'No especificada';
       let variedad = variedadSel || 'No especificada';
       let batches = carro;
+      let tipoOrigen = tipoCantidad;
+      if (usaDatosAmasado) {
+        const origen =
+          previoAmasado ||
+          datosPrevios.find(
+            (d) => d.categoria && d.categoria !== 'No especificada'
+          );
+        const plan = infoVigente?.plan;
+        if (origen) {
+          categoria = origen.categoria;
+          variedad = origen.variedad;
+          batches = origen.batches ?? '';
+        } else if (plan?.categoria) {
+          categoria = plan.categoria;
+          variedad = plan.variedad;
+          batches = '';
+        } else {
+          categoria = 'No especificada';
+          variedad = 'No especificada';
+          batches = '';
+        }
+        tipoOrigen = CATEGORIAS_EN_LATAS.includes(categoria)
+          ? 'latas'
+          : 'unidades';
+      }
+
       const datosEtapa = {};
-      if (session.etapa === 'Amasado') {
+      if (etapa === 'Amasado') {
         datosEtapa.cantidadProducida = Number(cantidadProducida);
         datosEtapa.tipoCantidad = tipoCantidad;
       }
-      if (session.etapa === 'Packing') datosEtapa.cajas = Number(cajas);
-      if (esControlSap) {
-        datosEtapa.ofPT = ofPT.trim();
-        // Pan y carro se copian del último registro de la OT
-        const anterior = previos.docs
-          .map((d) => d.data())
-          .filter((d) => d.categoria && d.categoria !== 'No especificada')
-          .sort(
-            (a, b) =>
-              (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0)
-          )[0];
-        if (anterior) {
-          categoria = anterior.categoria;
-          variedad = anterior.variedad;
-          batches = anterior.batches ?? '';
-        } else {
-          batches = '';
+      if (etapa === 'Horneado') {
+        datosEtapa.horneado = true;
+        datosEtapa.tipoCantidad = tipoOrigen;
+        Object.assign(datosEtapa, datosCalidad);
+      }
+      if (etapa === 'Packing') {
+        datosEtapa.cajas = Number(cajas);
+        if (mermas !== '') {
+          datosEtapa.mermas = Number(mermas);
+          datosEtapa.tipoCantidad = tipoOrigen;
         }
       }
-      if (session.etapa === 'Control de calidad') {
+      if (esControlSap) datosEtapa.ofPT = ofPT.trim();
+      if (etapa === 'Control de calidad') {
         datosEtapa.rechazada100 = rechazada100;
       }
 
@@ -297,37 +566,26 @@ export default function App() {
         variedad,
         batches,
         ...datosEtapa,
-        etapa: session.etapa,
+        etapa,
         operario: session.user,
         photoURL: photoURL,
         createdAt: serverTimestamp(),
-        fechaStr: new Date().toLocaleDateString('es-CL'),
-        horaStr: new Date().toLocaleTimeString('es-CL', {
-          hour: '2-digit',
-          minute: '2-digit',
-        }),
+        fechaStr,
+        horaStr,
       });
 
       // Si se subió una foto nueva, borra las fotos de etapas anteriores
       // para dejar solo una foto por OT y ahorrar espacio en Storage.
       if (photoURL) {
-        await borrarFotosAnteriores(previos.docs, session.etapa);
+        await borrarFotosAnteriores(previos.docs, etapa);
       }
 
-      setSuccessMsg(
-        `¡OT #${otNumber} registrada exitosamente en ${session.etapa}!`
-      );
+      setSuccessMsg(`¡OT #${otNumber} registrada exitosamente en ${etapa}!`);
       // Se mantiene la variedad: suelen venir muchas OT seguidas de la misma
-      if (!esControlSap) {
-        guardarUltimaVariedad(session.etapa, categoriaSel, variedadSel);
+      if (pideCarro) {
+        guardarUltimaVariedad(etapa, categoriaSel, variedadSel);
       }
-      setNumOt('');
-      setFotoBase64(null);
-      setBatchCount('1');
-      setCantidadProducida('');
-      setCajas('');
-      setOfPT('');
-      setRechazada100(false);
+      limpiarFormulario();
     } catch (err) {
       console.error(err);
       setErrorMsg('Error al guardar. Verifica tu conexión a internet.');
@@ -380,7 +638,13 @@ export default function App() {
                   }
                   setLoginError('');
                   setPinEtapa('');
-                  setSession({ user: name, role: 'operario', etapa: etapaLogin });
+                  setSession({
+                    user: name,
+                    role: 'operario',
+                    etapa: etapaLogin,
+                    calidad:
+                      etapaLogin === 'Horneado' && esPersonaCalidad(name),
+                  });
                 }}
                 className="space-y-4"
               >
@@ -398,6 +662,7 @@ export default function App() {
                         /[^\p{L}\s]/gu,
                         ''
                       );
+                      setNombreLogin(e.target.value);
                       setLoginError('');
                     }}
                     placeholder="Ej. Juan Pérez"
@@ -427,7 +692,9 @@ export default function App() {
                 {loginRequierePin && (
                   <div>
                     <label className={ESTILO_LABEL}>
-                      Contraseña Administrador
+                      {loginCalidadHorno
+                        ? 'Contraseña de control de calidad'
+                        : 'Contraseña Administrador'}
                     </label>
                     <input
                       type="password"
@@ -557,7 +824,9 @@ export default function App() {
               <p className="text-[10px] uppercase tracking-wider text-amber-200/80 font-semibold">
                 {session.role === 'admin'
                   ? 'Administración SAP'
-                  : `Puesto: ${session.etapa}`}
+                  : `Puesto: ${session.etapa}${
+                      session.calidad ? ' · Control de calidad' : ''
+                    }`}
               </p>
             </div>
           </div>
@@ -647,8 +916,12 @@ export default function App() {
                 </h2>
                 <p className="text-sm text-slate-500 mb-8">
                   {esControlSap
-                    ? 'Ingresa el N° de OT y el N° de OF PT creada en SAP.'
-                    : 'Completa los datos y fotografía la ficha física para registrar el avance.'}
+                    ? 'Ingresa el N° de OT, el N° de OF PT creada en SAP y la foto definitiva.'
+                    : esCalidadHorno
+                    ? 'Ingresa el N° de OT para revisar lo producido y registrar el control de calidad.'
+                    : usaDatosAmasado
+                    ? 'Ingresa el N° de OT: la variedad y el carro se toman de Amasado.'
+                    : 'Completa los datos para registrar el avance.'}
                 </p>
 
                 {errorMsg && (
@@ -679,7 +952,16 @@ export default function App() {
                     />
                   </div>
 
-                  {esControlSap ? (
+                  {usaDatosAmasado && (
+                    <TarjetaOt
+                      info={infoVigente}
+                      amasado={regAmasado}
+                      horneado={regHorneado}
+                      origen={datosOt}
+                    />
+                  )}
+
+                  {esControlSap && (
                     <div>
                       <label className={ESTILO_LABEL}>N° OF PT</label>
                       <input
@@ -694,7 +976,9 @@ export default function App() {
                         className={`${ESTILO_INPUT} font-mono text-base font-bold`}
                       />
                     </div>
-                  ) : (
+                  )}
+
+                  {pideCarro && (
                     <>
                       <div className="grid grid-cols-2 gap-4">
                         <div>
@@ -734,6 +1018,11 @@ export default function App() {
                           </select>
                         </div>
                       </div>
+                      {session.etapa === 'Amasado' && infoVigente?.plan && (
+                        <p className="-mt-3 text-[11px] text-emerald-700 font-medium">
+                          Variedad tomada de la planificación de la OT
+                        </p>
+                      )}
 
                       <div>
                         <label className={ESTILO_LABEL}>Número de carro</label>
@@ -778,19 +1067,158 @@ export default function App() {
                     </div>
                   )}
 
-                  {session.etapa === 'Packing' && (
-                    <div>
-                      <label className={ESTILO_LABEL}>Cajas</label>
+                  {session.etapa === 'Horneado' && !esCalidadHorno && (
+                    <label
+                      className={`flex items-center gap-3 p-4 rounded-2xl border cursor-pointer transition-all ${
+                        horneadoOk
+                          ? 'bg-emerald-50 border-emerald-300'
+                          : 'bg-slate-50 border-slate-200'
+                      }`}
+                    >
                       <input
-                        type="number"
-                        min="0"
-                        inputMode="numeric"
-                        required
-                        value={cajas}
-                        onChange={(e) => setCajas(e.target.value)}
-                        className={ESTILO_INPUT}
+                        type="checkbox"
+                        checked={horneadoOk}
+                        onChange={(e) => setHorneadoOk(e.target.checked)}
+                        className="w-6 h-6 accent-emerald-600 [color-scheme:light]"
                       />
+                      <span>
+                        <span className="block text-left text-base font-bold text-slate-800">
+                          Horneado
+                        </span>
+                        <span className="block text-left text-xs text-slate-500">
+                          Marca la casilla cuando el carro salga del horno
+                        </span>
+                      </span>
+                    </label>
+                  )}
+
+                  {esCalidadHorno && infoVigente && !infoVigente.cargando && (
+                    <div className="p-4 rounded-2xl border border-violet-200 bg-violet-50/60 space-y-4">
+                      <div>
+                        <p className="text-sm font-black text-violet-900">
+                          Control de calidad en horno
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          {regHorneado
+                            ? 'El horno ya registró esta OT: se agregará tu revisión.'
+                            : 'La OT quedará registrada como horneada con tu revisión.'}
+                        </p>
+                      </div>
+
+                      {esUnitario ? (
+                        <div>
+                          <label className={ESTILO_LABEL}>
+                            Unidades producidas
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            inputMode="numeric"
+                            required
+                            value={cantidadCorregida}
+                            onChange={(e) => setCantidadCorregida(e.target.value)}
+                            className={ESTILO_INPUT}
+                          />
+                          <p className="text-[11px] text-slate-500 mt-1">
+                            {regAmasado?.cantidadProducida != null
+                              ? `En Amasado se contaron ${regAmasado.cantidadProducida}. Corrígelo si no coincide.`
+                              : 'Esta OT no tiene unidades registradas en Amasado.'}
+                          </p>
+                        </div>
+                      ) : null}
+
+                      <div>
+                        <label className={ESTILO_LABEL}>Resultado</label>
+                        <div className="grid grid-cols-2 gap-2">
+                          {Object.entries(RESULTADOS_CALIDAD).map(
+                            ([id, texto]) => (
+                              <button
+                                key={id}
+                                type="button"
+                                onClick={() => setResultadoCalidad(id)}
+                                aria-pressed={resultadoCalidad === id}
+                                className={`py-3 px-2 rounded-xl text-xs font-bold border transition-all ${
+                                  resultadoCalidad === id
+                                    ? id === 'aprobada'
+                                      ? 'bg-emerald-600 text-white border-emerald-600'
+                                      : id === 'rechazada'
+                                      ? 'bg-red-600 text-white border-red-600'
+                                      : 'bg-amber-600 text-white border-amber-600'
+                                    : 'bg-white text-slate-600 border-slate-200'
+                                }`}
+                              >
+                                {texto}
+                              </button>
+                            )
+                          )}
+                        </div>
+                      </div>
+
+                      {resultadoCalidad === 'parcial' && (
+                        <div>
+                          <label className={ESTILO_LABEL}>
+                            {tipoCantidad === 'latas'
+                              ? 'Latas rechazadas'
+                              : 'Unidades rechazadas'}
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            inputMode="numeric"
+                            required
+                            value={unidadesRechazadas}
+                            onChange={(e) => setUnidadesRechazadas(e.target.value)}
+                            className={ESTILO_INPUT}
+                          />
+                        </div>
+                      )}
+                      {resultadoCalidad === 'seleccion' && (
+                        <p className="text-xs text-amber-800 font-medium">
+                          En Packing seleccionarán las unidades buenas y anotarán
+                          las mermas.
+                        </p>
+                      )}
                     </div>
+                  )}
+
+                  {session.etapa === 'Packing' && (
+                    <>
+                      {regHorneado?.resultadoCalidad === 'seleccion' && (
+                        <div className="p-4 bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-2xl flex items-center gap-3">
+                          <AlertTriangle className="w-5 h-5 shrink-0 text-amber-600" />
+                          Control de calidad dejó esta OT para selección:
+                          anota las mermas.
+                        </div>
+                      )}
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className={ESTILO_LABEL}>Cajas</label>
+                          <input
+                            type="number"
+                            min="0"
+                            inputMode="numeric"
+                            required
+                            value={cajas}
+                            onChange={(e) => setCajas(e.target.value)}
+                            className={ESTILO_INPUT}
+                          />
+                        </div>
+                        <div>
+                          <label className={ESTILO_LABEL}>
+                            Mermas (opcional)
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            inputMode="numeric"
+                            value={mermas}
+                            onChange={(e) => setMermas(e.target.value)}
+                            placeholder={tipoCantidad === 'latas' ? 'Latas' : 'Unidades'}
+                            className={ESTILO_INPUT}
+                          />
+                        </div>
+                      </div>
+                    </>
                   )}
 
                   {session.etapa === 'Control de calidad' && (
@@ -818,10 +1246,10 @@ export default function App() {
                     </label>
                   )}
 
-                  {!esControlSap && (
+                  {esControlSap && (
                     <div className="pt-2">
                       <label className={`${ESTILO_LABEL} mb-2 text-center`}>
-                        Fotografía de la OT (opcional)
+                        Foto definitiva de la OT (opcional)
                       </label>
                       <div className="flex justify-center px-6 pt-6 pb-7 border-2 border-slate-200 border-dashed rounded-2xl hover:border-amber-500 hover:bg-amber-50/30 transition-all bg-slate-50 relative">
                         {fotoBase64 ? (
@@ -872,8 +1300,10 @@ export default function App() {
                       <>Guardando...</>
                     ) : (
                       <>
-                        <CheckCircle className="w-5 h-5" /> Registrar OT en{' '}
-                        {session.etapa}
+                        <CheckCircle className="w-5 h-5" />{' '}
+                        {esCalidadHorno
+                          ? 'Guardar control de calidad'
+                          : `Registrar OT en ${session.etapa}`}
                       </>
                     )}
                   </button>

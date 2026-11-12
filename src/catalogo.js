@@ -116,12 +116,43 @@ export const fechaRegistro = (ot) => {
   return isoLocal(new Date());
 };
 
+// Control de calidad: Yara y Katherine Núñez (Katy). En Horneado entran con
+// la contraseña y pueden corregir unidades y marcar rechazos.
+export const esPersonaCalidad = (nombre) =>
+  /^(yara|katy|kathy|katherine|katherin|katerine|catherine)\b/.test(
+    String(nombre || '')
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .toLowerCase()
+      .trim()
+  );
+
+export const RESULTADOS_CALIDAD = {
+  aprobada: 'Sin rechazo',
+  parcial: 'Rechazo parcial',
+  seleccion: 'Para selección',
+  rechazada: 'Rechazada al 100%',
+};
+
 export const textoProduccion = (ot) => {
   const partes = [];
+  const tipo = ot.tipoCantidad || 'unidades';
   if (ot.cantidadProducida != null) {
-    partes.push(`${ot.cantidadProducida} ${ot.tipoCantidad || 'unidades'}`);
+    partes.push(`${ot.cantidadProducida} ${tipo}`);
+  }
+  if (ot.horneado) partes.push('Horneado');
+  if (ot.cantidadCorregida != null) {
+    partes.push(`corregido a ${ot.cantidadCorregida} ${tipo}`);
+  }
+  if (ot.resultadoCalidad === 'parcial') {
+    partes.push(`${ot.unidadesRechazadas} ${tipo} rechazadas`);
+  } else if (ot.resultadoCalidad === 'seleccion') {
+    partes.push('para selección');
+  } else if (ot.resultadoCalidad === 'rechazada') {
+    partes.push('rechazada al 100%');
   }
   if (ot.cajas != null) partes.push(`${ot.cajas} cajas`);
+  if (ot.mermas != null) partes.push(`${ot.mermas} mermas`);
   if (ot.ofPT) partes.push(`OF PT ${ot.ofPT}`);
   return partes.join(' / ');
 };
