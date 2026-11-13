@@ -132,6 +132,12 @@ const TarjetaOt = ({ info, amasado, horneado, origen }) => {
       amasado?.cantidadProducida ?? '—',
     ],
   ];
+  if (amasado?.carros?.length > 1) {
+    filas.push([
+      'Por carro',
+      amasado.carros.map((c) => `Carro ${c.carro}: ${c.cantidad}`).join(' · '),
+    ]);
+  }
   if (horneado?.cantidadCorregida != null) {
     filas.push([
       'Corregido en horno',
@@ -178,6 +184,10 @@ export default function App() {
   const [variedadSel, setVariedadSel] = useState('');
   const [batchCount, setBatchCount] = useState('1');
   const [cantidadProducida, setCantidadProducida] = useState('');
+  // Amasado con doble carro: segundo carro de la misma OT
+  const [dobleCarro, setDobleCarro] = useState(false);
+  const [carro2, setCarro2] = useState('');
+  const [cantidad2, setCantidad2] = useState('');
   const [cajas, setCajas] = useState('');
   const [ofPT, setOfPT] = useState('');
   const [rechazada100, setRechazada100] = useState(false);
@@ -239,6 +249,16 @@ export default function App() {
     ) ||
     (infoVigente?.plan?.categoria ? infoVigente.plan : null);
 
+  // Pan de la planificación (Bodega y Amasado ya no lo eligen a mano)
+  const planOt =
+    infoVigente?.plan &&
+    CATALOGO_PAN[infoVigente.plan.categoria]?.includes(infoVigente.plan.variedad)
+      ? infoVigente.plan
+      : null;
+  // Solo si la OT no está en la planificación se elige el pan a mano
+  const elegirPanAMano =
+    pideCarro && !planOt && !!infoVigente && !infoVigente.cargando;
+
   const categoriaEfectiva = usaDatosAmasado ? datosOt?.categoria : categoriaSel;
   const tipoCantidad = CATEGORIAS_EN_LATAS.includes(categoriaEfectiva)
     ? 'latas'
@@ -253,6 +273,8 @@ export default function App() {
 
   // Al entrar a un puesto, recupera la última variedad usada en ese puesto
   useEffect(() => {
+    setSuccessMsg('');
+    setErrorMsg('');
     if (!etapaActual) return;
     const ultima = leerUltimaVariedad(etapaActual);
     const categoria = CATALOGO_PAN[ultima.categoria] ? ultima.categoria : '';
@@ -303,10 +325,14 @@ export default function App() {
     };
   }, [numOt, session]);
 
-  // Amasado: la variedad sale de la planificación de la OT
+  // Bodega y Amasado: el pan y la variedad salen de la planificación de la OT
   useEffect(() => {
     const plan = infoOt?.plan;
-    if (etapaActual !== 'Amasado' || !plan || !CATALOGO_PAN[plan.categoria]) {
+    if (
+      (etapaActual !== 'Amasado' && etapaActual !== 'Bodega') ||
+      !plan ||
+      !CATALOGO_PAN[plan.categoria]
+    ) {
       return;
     }
     setCategoriaSel(plan.categoria);
@@ -400,6 +426,9 @@ export default function App() {
     setFotoBase64(null);
     setBatchCount('1');
     setCantidadProducida('');
+    setDobleCarro(false);
+    setCarro2('');
+    setCantidad2('');
     setCajas('');
     setMermas('');
     setOfPT('');
@@ -423,15 +452,29 @@ export default function App() {
     if (pideCarro && !FORMATO_CARRO.test(carro)) {
       return setErrorMsg('El N° de carro debe ser un número o carros separados por guion, ej. 03-02');
     }
+    if (pideCarro && infoVigente?.cargando) {
+      return setErrorMsg('Espera un momento: se está buscando la OT');
+    }
     if (etapa === 'Amasado' && (!categoriaSel || !variedadSel)) {
       return setErrorMsg('Selecciona el tipo de pan y la variedad');
+    }
+    const usaDobleCarro = etapa === 'Amasado' && dobleCarro;
+    if (usaDobleCarro) {
+      if (!/^\d+$/.test(carro2.trim())) {
+        return setErrorMsg('Ingresa el N° del segundo carro');
+      }
+      if (cantidad2 === '' || Number(cantidad2) < 0) {
+        return setErrorMsg('Ingresa la cantidad del segundo carro');
+      }
     }
     if (etapa === 'Horneado' && !esCalidadHorno && !horneadoOk) {
       return setErrorMsg('Marca la casilla "Horneado" para confirmar');
     }
     if (esCalidadHorno) {
-      if (esUnitario && (cantidadCorregida === '' || Number(cantidadCorregida) < 0)) {
-        return setErrorMsg('Ingresa las unidades producidas');
+      if (cantidadCorregida === '' || Number(cantidadCorregida) < 0) {
+        return setErrorMsg(
+          esUnitario ? 'Ingresa las unidades producidas' : 'Ingresa las latas producidas'
+        );
       }
       if (resultadoCalidad === 'parcial' && !(Number(unidadesRechazadas) > 0)) {
         return setErrorMsg('Ingresa cuántas unidades se rechazaron');
@@ -467,7 +510,7 @@ export default function App() {
       let datosCalidad = {};
       if (esCalidadHorno) {
         const contadas = previoAmasado?.cantidadProducida;
-        const corregida = esUnitario ? Number(cantidadCorregida) : null;
+        const corregida = Number(cantidadCorregida);
         datosCalidad = {
           resultadoCalidad,
           unidadesRechazadas:
@@ -542,6 +585,17 @@ export default function App() {
       if (etapa === 'Amasado') {
         datosEtapa.cantidadProducida = Number(cantidadProducida);
         datosEtapa.tipoCantidad = tipoCantidad;
+        if (usaDobleCarro) {
+          // Se guarda el total y el detalle de cada carro
+          const c2 = carro2.trim();
+          datosEtapa.carros = [
+            { carro, cantidad: Number(cantidadProducida) },
+            { carro: c2, cantidad: Number(cantidad2) },
+          ];
+          datosEtapa.cantidadProducida =
+            Number(cantidadProducida) + Number(cantidad2);
+          batches = `${carro}-${c2}`;
+        }
       }
       if (etapa === 'Horneado') {
         datosEtapa.horneado = true;
@@ -978,8 +1032,32 @@ export default function App() {
                     </div>
                   )}
 
+                  {pideCarro && !elegirPanAMano && (
+                    planOt ? (
+                      <div className="p-4 rounded-2xl border border-emerald-200 bg-emerald-50/60">
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                          Pan de la planificación
+                        </p>
+                        <p className="text-sm font-black text-slate-800">
+                          {planOt.categoria} · {planOt.variedad}
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-400 font-medium -mt-2">
+                        {infoVigente?.cargando
+                          ? 'Buscando la OT...'
+                          : 'Al ingresar la OT aparecerán el tipo de pan y la variedad.'}
+                      </p>
+                    )
+                  )}
+
                   {pideCarro && (
                     <>
+                      {elegirPanAMano && (
+                      <>
+                      <p className="-mb-2 text-xs font-bold text-amber-700">
+                        Esta OT no está en la planificación: elige el pan.
+                      </p>
                       <div className="grid grid-cols-2 gap-4">
                         <div>
                           <label className={ESTILO_LABEL}>Tipo de Pan</label>
@@ -1018,53 +1096,129 @@ export default function App() {
                           </select>
                         </div>
                       </div>
-                      {session.etapa === 'Amasado' && infoVigente?.plan && (
-                        <p className="-mt-3 text-[11px] text-emerald-700 font-medium">
-                          Variedad tomada de la planificación de la OT
-                        </p>
+                      </>
                       )}
 
-                      <div>
-                        <label className={ESTILO_LABEL}>Número de carro</label>
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          pattern="\d+(-\d+)*"
-                          title="Un número o varios carros separados por guion, ej. 03-02"
-                          required
-                          value={batchCount}
-                          onChange={(e) =>
-                            setBatchCount(e.target.value.replace(/[^\d-]/g, ''))
-                          }
-                          placeholder="Ej. 3 o 03-02"
-                          className={ESTILO_INPUT}
-                        />
-                        <p className="text-[11px] text-slate-400 mt-1">
-                          Si la OT tiene dos carros, sepáralos con guion: 03-02
-                        </p>
+                      <div
+                        className={
+                          session.etapa === 'Amasado' ? 'grid grid-cols-2 gap-4' : ''
+                        }
+                      >
+                        <div>
+                          <label className={ESTILO_LABEL}>
+                            {dobleCarro ? 'Carro 1: N° de carro' : 'Número de carro'}
+                          </label>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            pattern={dobleCarro ? '\\d+' : '\\d+(-\\d+)*'}
+                            title="Número de carro"
+                            required
+                            value={batchCount}
+                            onChange={(e) =>
+                              setBatchCount(
+                                e.target.value.replace(
+                                  dobleCarro ? /\D/g : /[^\d-]/g,
+                                  ''
+                                )
+                              )
+                            }
+                            placeholder="Ej. 3"
+                            className={ESTILO_INPUT}
+                          />
+                        </div>
+                        {session.etapa === 'Amasado' && (
+                          <div>
+                            <label className={ESTILO_LABEL}>
+                              {dobleCarro ? 'Carro 1: ' : ''}
+                              {tipoCantidad === 'latas'
+                                ? 'N° de latas'
+                                : 'Unidades'}
+                            </label>
+                            <input
+                              type="number"
+                              min="0"
+                              inputMode="numeric"
+                              required
+                              value={cantidadProducida}
+                              onChange={(e) => setCantidadProducida(e.target.value)}
+                              className={ESTILO_INPUT}
+                            />
+                          </div>
+                        )}
                       </div>
-                    </>
-                  )}
 
-                  {session.etapa === 'Amasado' && (
-                    <div>
-                      <label className={ESTILO_LABEL}>
-                        {!categoriaSel
-                          ? 'Unidades / Latas'
-                          : tipoCantidad === 'latas'
-                          ? 'Número de latas'
-                          : 'Unidades producidas'}
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        inputMode="numeric"
-                        required
-                        value={cantidadProducida}
-                        onChange={(e) => setCantidadProducida(e.target.value)}
-                        className={ESTILO_INPUT}
-                      />
-                    </div>
+                      {session.etapa === 'Amasado' && (
+                        <label
+                          className={`flex items-center gap-3 p-3.5 rounded-2xl border cursor-pointer transition-all ${
+                            dobleCarro
+                              ? 'bg-amber-50 border-amber-300'
+                              : 'bg-slate-50 border-slate-200'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={dobleCarro}
+                            onChange={(e) => {
+                              setDobleCarro(e.target.checked);
+                              if (e.target.checked) {
+                                setBatchCount((c) => c.split('-')[0]);
+                              }
+                            }}
+                            className="w-5 h-5 accent-amber-600 [color-scheme:light]"
+                          />
+                          <span>
+                            <span className="block text-left text-sm font-bold text-slate-800">
+                              Doble carro (opcional)
+                            </span>
+                            <span className="block text-left text-xs text-slate-500">
+                              Márcala si la OT salió en dos carros
+                            </span>
+                          </span>
+                        </label>
+                      )}
+
+                      {session.etapa === 'Amasado' && dobleCarro && (
+                        <div className="grid grid-cols-2 gap-4 pl-3 border-l-2 border-amber-200">
+                          <div>
+                            <label className={ESTILO_LABEL}>Carro 2: N° de carro</label>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              required
+                              value={carro2}
+                              onChange={(e) =>
+                                setCarro2(e.target.value.replace(/\D/g, ''))
+                              }
+                              placeholder="Ej. 2"
+                              className={ESTILO_INPUT}
+                            />
+                          </div>
+                          <div>
+                            <label className={ESTILO_LABEL}>
+                              Carro 2:{' '}
+                              {tipoCantidad === 'latas' ? 'N° de latas' : 'Unidades'}
+                            </label>
+                            <input
+                              type="number"
+                              min="0"
+                              inputMode="numeric"
+                              required
+                              value={cantidad2}
+                              onChange={(e) => setCantidad2(e.target.value)}
+                              className={ESTILO_INPUT}
+                            />
+                          </div>
+                          {cantidadProducida !== '' && cantidad2 !== '' && (
+                            <p className="col-span-2 text-xs font-bold text-slate-600">
+                              Total de la OT:{' '}
+                              {Number(cantidadProducida) + Number(cantidad2)}{' '}
+                              {tipoCantidad}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </>
                   )}
 
                   {session.etapa === 'Horneado' && !esCalidadHorno && (
@@ -1105,10 +1259,10 @@ export default function App() {
                         </p>
                       </div>
 
-                      {esUnitario ? (
+                      {datosOt ? (
                         <div>
                           <label className={ESTILO_LABEL}>
-                            Unidades producidas
+                            {esUnitario ? 'Unidades producidas' : 'Latas producidas'}
                           </label>
                           <input
                             type="number"
@@ -1121,8 +1275,8 @@ export default function App() {
                           />
                           <p className="text-[11px] text-slate-500 mt-1">
                             {regAmasado?.cantidadProducida != null
-                              ? `En Amasado se contaron ${regAmasado.cantidadProducida}. Corrígelo si no coincide.`
-                              : 'Esta OT no tiene unidades registradas en Amasado.'}
+                              ? `En Amasado se registraron ${regAmasado.cantidadProducida} ${tipoCantidad}. Corrígelo si no coincide (por ejemplo, si faltó sumar el segundo carro).`
+                              : `Esta OT no tiene ${tipoCantidad} registradas en Amasado.`}
                           </p>
                         </div>
                       ) : null}
