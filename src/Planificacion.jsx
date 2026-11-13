@@ -24,6 +24,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { COL_OTS, COL_PLANIFICACION, db } from './firebase';
+import { AlertaFaltaCarro } from './CarrosPacking';
 import {
   COLOR_ETAPA,
   ETAPAS,
@@ -787,6 +788,17 @@ export function AdminLotes() {
     [registros]
   );
 
+  // Packing con carros pendientes ("Falta carro N")
+  const packingIncompleto = useMemo(
+    () =>
+      new Map(
+        registros
+          .filter((r) => r.etapa === 'Packing' && r.carrosCompletos === false)
+          .map((r) => [r.otNumber, r])
+      ),
+    [registros]
+  );
+
   const cumple = (ot, ind) =>
     ind.liberacion
       ? liberadas.has(ot.otNumber)
@@ -1052,6 +1064,9 @@ export function AdminLotes() {
                                 <span className="text-xs font-bold text-slate-400 hidden sm:inline">
                                   {hechos} de {total} dosificadas
                                 </span>
+                                <AlertaFaltaCarro
+                                  ot={packingIncompleto.get(ot.otNumber)}
+                                />
                                 <span
                                   className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border whitespace-nowrap ${
                                     etapa

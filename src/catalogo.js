@@ -153,8 +153,40 @@ export const textoProduccion = (ot, { conCalidad = true } = {}) => {
   } else if (ot.resultadoCalidad === 'rechazada') {
     partes.push('rechazada al 100%');
   }
+  if (ot.cantidadTotal != null) {
+    partes.push(`${ot.cantidadTotal} ${ot.tipoCantidadTotal || tipo}`);
+  }
   if (ot.cajas != null) partes.push(`${ot.cajas} cajas`);
   if (conCalidad && ot.mermas != null) partes.push(`${ot.mermas} mermas`);
   if (ot.ofPT) partes.push(`OF PT ${ot.ofPT}`);
   return partes.join(' / ');
+};
+
+// --- PACKING CON VARIOS CARROS ---
+// Un carro está completo cuando ya tiene su cantidad y sus cajas
+export const carroCompleto = (c) => c.cantidad != null && c.cajas != null;
+
+// Carros que faltan por empacar en un registro de Packing
+export const carrosPendientes = (ot) =>
+  ot?.carrosCompletos === false
+    ? (ot.carros || []).filter((c) => !carroCompleto(c))
+    : [];
+
+export const textoFaltaCarros = (ot) => {
+  const pendientes = carrosPendientes(ot);
+  return pendientes.length
+    ? `Falta carro ${pendientes.map((c) => c.numero).join(' y ')}`
+    : '';
+};
+
+// Totales del registro de Packing a partir de sus carros
+export const resumenCarros = (carros, tipo) => {
+  const completos = carros.filter(carroCompleto);
+  return {
+    cajas: completos.reduce((a, c) => a + c.cajas, 0),
+    cantidadTotal: completos.reduce((a, c) => a + c.cantidad, 0),
+    tipoCantidadTotal: tipo,
+    carrosCompletos: completos.length === carros.length,
+    batches: carros.map((c) => c.numero).join('-'),
+  };
 };

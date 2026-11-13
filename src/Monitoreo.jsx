@@ -32,6 +32,17 @@ import {
   textoProduccion,
   RESULTADOS_CALIDAD,
 } from './catalogo';
+import { DetalleCarrosPacking } from './CarrosPacking';
+
+// Carros de Packing para el CSV: "38: 81 unidades, 5 cajas | 17: pendiente"
+const textoCarrosCsv = (ot) =>
+  (ot.etapa === 'Packing' ? ot.carros || [] : [])
+    .map((c) =>
+      c.cantidad != null && c.cajas != null
+        ? `${c.numero}: ${c.cantidad} ${c.tipoCantidad}, ${c.cajas} cajas (${c.operario} ${c.fechaStr} ${c.horaStr})`
+        : `${c.numero}: pendiente`
+    )
+    .join(' | ');
 
 const POR_PAGINA = 45;
 
@@ -269,6 +280,8 @@ export default function Monitoreo() {
       'Rechazadas en horno',
       'Revisado por',
       'Mermas',
+      'Carros packing',
+      'Carros completos',
       'Etapa',
       'Operario',
       'Fecha',
@@ -290,6 +303,12 @@ export default function Monitoreo() {
       ot.unidadesRechazadas,
       ot.revisadoPor,
       ot.mermas,
+      textoCarrosCsv(ot),
+      ot.carrosCompletos === false
+        ? 'No'
+        : ot.etapa === 'Packing' && ot.carros?.length
+        ? 'Si'
+        : '',
       ot.etapa,
       ot.operario,
       ot.fechaStr,
@@ -571,6 +590,7 @@ export default function Monitoreo() {
                           <span className="text-slate-300">-</span>
                         )
                       )}
+                      <DetalleCarrosPacking ot={ot} />
                     </td>
                     <td className="px-6 py-4">
                       <Liberacion ot={ot} />
