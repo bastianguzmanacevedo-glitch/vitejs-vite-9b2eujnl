@@ -1,12 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  addDoc,
   collection,
   deleteField,
   doc,
   FieldPath,
+  getDocs,
   onSnapshot,
   orderBy,
   query,
+  serverTimestamp,
   Timestamp,
   updateDoc,
   where,
@@ -26,6 +29,7 @@ import {
 import { COL_OTS, COL_PLANIFICACION, db } from './firebase';
 import { AlertaFaltaCarro } from './CarrosPacking';
 import {
+  CATALOGO_PAN,
   COLOR_ETAPA,
   ETAPAS,
   ETAPAS_POSTERIORES,
@@ -204,7 +208,14 @@ export function PlanificacionBodega({ session, registros, onRegistrar }) {
   // Tipo de pan desplegado (uno a la vez, para encontrar rápido la variedad)
   const [grupoAbierto, setGrupoAbierto] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
+  // Registro en Bodega directo desde la checklist (sin pasar al formulario)
+  const [carroBodega, setCarroBodega] = useState('');
+  const [guardando, setGuardando] = useState(false);
   const { ots, loading } = usePlanificacion(fecha);
+  useEffect(() => {
+    setCarroBodega('');
+    setErrorMsg('');
+  }, [seleccionId]);
 
   const grupos = useMemo(() => agruparPorVariedad(ots), [ots]);
   const seleccion = ots.find((o) => o.id === seleccionId);
@@ -234,6 +245,51 @@ export function PlanificacionBodega({ session, registros, onRegistrar }) {
     } catch (err) {
       console.error(err);
       setErrorMsg('No se pudo guardar. Revisa tu conexión a internet.');
+    }
+  };
+
+  const registrarBodega = async (ot) => {
+    const carro = carroBodega.trim();
+    if (!/^\d+(-\d+)*$/.test(carro)) {
+      setErrorMsg('Ingresa el N° de carro (ej. 3, o 03-02 si son varios)');
+      return;
+    }
+    setGuardando(true);
+    setErrorMsg('');
+    try {
+      const previos = await getDocs(
+        query(collection(db, COL_OTS), where('otNumber', '==', ot.otNumber))
+      );
+      if (previos.docs.some((d) => d.data().etapa === 'Bodega')) {
+        setErrorMsg(`La OT #${ot.otNumber} ya fue registrada en Bodega.`);
+        return;
+      }
+      const ahora = new Date();
+      const categoriaValida = !!CATALOGO_PAN[ot.categoria];
+      await addDoc(collection(db, COL_OTS), {
+        otNumber: ot.otNumber,
+        categoria: categoriaValida ? ot.categoria : 'No especificada',
+        variedad:
+          categoriaValida && CATALOGO_PAN[ot.categoria].includes(ot.variedad)
+            ? ot.variedad
+            : 'No especificada',
+        batches: carro,
+        etapa: 'Bodega',
+        operario: session.user,
+        photoURL: null,
+        createdAt: serverTimestamp(),
+        fechaStr: ahora.toLocaleDateString('es-CL'),
+        horaStr: ahora.toLocaleTimeString('es-CL', {
+          hour: '2-digit',
+          minute: '2-digit',
+        }),
+      });
+      setCarroBodega('');
+    } catch (err) {
+      console.error(err);
+      setErrorMsg('No se pudo registrar. Revisa tu conexión a internet.');
+    } finally {
+      setGuardando(false);
     }
   };
 
@@ -352,15 +408,43 @@ export function PlanificacionBodega({ session, registros, onRegistrar }) {
             <CheckCircle className="w-5 h-5" /> OT ya registrada en Bodega
           </p>
         ) : (
-          <button
-            type="button"
-            disabled={!completa}
-            onClick={() => onRegistrar(seleccion)}
-            className="w-full mt-6 py-4 px-4 bg-amber-700 hover:bg-amber-800 disabled:bg-slate-200 disabled:text-slate-400 text-white font-bold rounded-2xl transition-all flex items-center justify-center gap-2"
-          >
-            <CheckCircle className="w-5 h-5" />
-            {completa ? 'Registrar esta OT' : 'Marca todas las materias primas'}
-          </button>
+          <div className="mt-6 space-y-3">
+            {completa && (
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                  N° de carro
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={carroBodega}
+                  onChange={(e) =>
+                    setCarroBodega(e.target.value.replace(/[^\d-]/g, ''))
+                  }
+                  placeholder="Ej. 3"
+                  className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500 transition-all"
+                />
+              </div>
+            )}
+            <button
+              type="button"
+              disabled={!completa || guardando}
+              onClick={() => registrarBodega(seleccion)}
+              className="w-full py-4 px-4 bg-amber-700 hover:bg-amber-800 disabled:bg-slate-200 disabled:text-slate-400 text-white font-bold rounded-2xl transition-all flex items-center justify-center gap-2"
+            >
+              <CheckCircle className="w-5 h-5" />
+              {guardando
+                ? 'Guardando...'
+                : completa
+                ? 'Registrar en Bodega'
+                : 'Marca todas las materias primas'}
+            </button>
+            {errorMsg && (
+              <p className="text-sm font-bold text-red-600 text-center">
+                {errorMsg}
+              </p>
+            )}
+          </div>
         )}
       </div>
     );

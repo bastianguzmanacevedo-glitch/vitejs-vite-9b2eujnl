@@ -42,7 +42,7 @@ import {
 import { AdminLotes, PlanificacionBodega } from './Planificacion';
 import Monitoreo from './Monitoreo';
 import Inventario from './Inventario';
-import Ajustes from './Ajustes';
+import Ajustes, { leerRecordado, guardarRecordado } from './Ajustes';
 import {
   CATALOGO_PAN,
   CATEGORIAS_EN_LATAS,
@@ -169,6 +169,9 @@ const TarjetaOt = ({ info, amasado, horneado, packing, origen }) => {
       `${horneado.cantidadCorregida} ${tipo}`,
     ]);
   }
+  if (packing?.mermas != null) {
+    filas.push(['Mermas en Packing', `${packing.mermas} ${tipo}`]);
+  }
   if (horneado?.resultadoCalidad) {
     filas.push([
       'Calidad en horno',
@@ -227,6 +230,9 @@ export default function App() {
   const [cajas, setCajas] = useState('');
   const [ofPT, setOfPT] = useState('');
   const [rechazada100, setRechazada100] = useState(false);
+  // Control de calidad: rechazo parcial con las unidades mermadas (control final)
+  const [rechazoParcial, setRechazoParcial] = useState(false);
+  const [mermasCC, setMermasCC] = useState('');
   const [horneadoOk, setHorneadoOk] = useState(false);
   const [cantidadCorregida, setCantidadCorregida] = useState('');
   const [resultadoCalidad, setResultadoCalidad] = useState('aprobada');
@@ -240,8 +246,10 @@ export default function App() {
   const [successMsg, setSuccessMsg] = useState('');
 
   // Acceso
-  const [etapaLogin, setEtapaLogin] = useState('');
-  const [nombreLogin, setNombreLogin] = useState('');
+  // Nombre y puesto guardados en este teléfono (Ajustes del operario)
+  const [recordado] = useState(leerRecordado);
+  const [etapaLogin, setEtapaLogin] = useState(recordado?.etapa || '');
+  const [nombreLogin, setNombreLogin] = useState(recordado?.nombre || '');
   const [pinEtapa, setPinEtapa] = useState('');
   const [loginError, setLoginError] = useState('');
   const [showPinAdmin, setShowPinAdmin] = useState(false);
@@ -432,6 +440,15 @@ export default function App() {
     );
   }, [infoOt, etapaActual]);
 
+  // Control de calidad: parte con las mermas que anotó Packing (se pueden corregir)
+  useEffect(() => {
+    if (etapaActual !== 'Control de calidad' || !infoOt || infoOt.cargando) return;
+    const packing = infoOt.registros.find((r) => r.etapa === 'Packing');
+    const tieneMermas = packing?.mermas != null && packing.mermas > 0;
+    setRechazoParcial(tieneMermas);
+    setMermasCC(tieneMermas ? String(packing.mermas) : '');
+  }, [infoOt, etapaActual]);
+
   // Registros recientes (el panel de monitoreo carga los suyos por fecha)
   useEffect(() => {
     const desde = new Date();
@@ -519,6 +536,8 @@ export default function App() {
     setMermas('');
     setOfPT('');
     setRechazada100(false);
+    setRechazoParcial(false);
+    setMermasCC('');
     setHorneadoOk(false);
     setCantidadCorregida('');
     setResultadoCalidad('aprobada');
@@ -569,6 +588,13 @@ export default function App() {
       if (!completarPacking && !carrosPk.some(carroPkLleno)) {
         return setErrorMsg('Completa la cantidad y las cajas de al menos un carro');
       }
+    }
+    if (
+      etapa === 'Control de calidad' &&
+      rechazoParcial &&
+      !(ES_ENTERO.test(mermasCC.trim()) && Number(mermasCC) > 0)
+    ) {
+      return setErrorMsg('Ingresa las unidades rechazadas (número entero mayor que 0)');
     }
     if (etapa === 'Horneado' && !esCalidadHorno && !horneadoOk) {
       return setErrorMsg('Marca la casilla "Horneado" para confirmar');
@@ -787,6 +813,15 @@ export default function App() {
       if (esControlSap) datosEtapa.ofPT = ofPT.trim();
       if (etapa === 'Control de calidad') {
         datosEtapa.rechazada100 = rechazada100;
+        datosEtapa.rechazoParcial = !rechazada100 && rechazoParcial;
+        const previoPk = datosPrevios.find((d) => d.etapa === 'Packing');
+        if (datosEtapa.rechazoParcial) {
+          // Merma final de la OT (control de calidad la confirma o la corrige)
+          datosEtapa.mermas = Number(mermasCC);
+          datosEtapa.tipoCantidad =
+            previoPk?.tipoCantidadTotal || previoPk?.tipoCantidad || tipoOrigen;
+        }
+        if (previoPk?.mermas != null) datosEtapa.mermasPacking = previoPk.mermas;
       }
 
       await addDoc(collection(db, COL_OTS), {
@@ -875,6 +910,10 @@ export default function App() {
                   }
                   setLoginError('');
                   setPinEtapa('');
+                  // Si el teléfono recuerda al operario, guarda su último puesto
+                  if (leerRecordado()) {
+                    guardarRecordado({ nombre: name, etapa: etapaLogin });
+                  }
                   setSession({
                     user: name,
                     role: 'operario',
@@ -891,6 +930,7 @@ export default function App() {
                     name="operarioName"
                     type="text"
                     required
+                    defaultValue={leerRecordado()?.nombre || ''}
                     autoComplete="name"
                     autoCapitalize="words"
                     onChange={(e) => {
@@ -1079,12 +1119,23 @@ export default function App() {
                 {session.user}
               </button>
             ) : (
-              <span className="text-xs bg-black/20 px-3 py-1.5 rounded-full border border-white/10 flex items-center gap-1.5 font-medium">
-                <User className="w-3.5 h-3.5 text-amber-300" /> {session.user}
-              </span>
+              <button
+                type="button"
+                onClick={() => setShowAjustes(true)}
+                title="Ajustes"
+                className="text-xs bg-black/20 hover:bg-black/30 px-3 py-1.5 rounded-full border border-white/10 flex items-center gap-1.5 font-medium transition-all"
+              >
+                <Settings className="w-3.5 h-3.5 text-amber-300" />{' '}
+                {session.user}
+              </button>
             )}
             <button
-              onClick={() => setSession(null)}
+              onClick={() => {
+                setSession(null);
+                const r = leerRecordado();
+                setNombreLogin(r?.nombre || '');
+                if (r?.etapa) setEtapaLogin(r.etapa);
+              }}
               aria-label="Salir"
               className="p-2 text-white/60 hover:text-white hover:bg-white/10 rounded-xl transition-all"
             >
@@ -1096,6 +1147,7 @@ export default function App() {
 
       {showAjustes && (
         <Ajustes
+          session={session}
           onCerrar={() => setShowAjustes(false)}
           oscuro={oscuro}
           setOscuro={setOscuro}
@@ -1838,6 +1890,53 @@ export default function App() {
                   )}
 
                   {session.etapa === 'Control de calidad' && (
+                    <>
+                    <label
+                      className={`flex items-center gap-3 p-4 rounded-2xl border cursor-pointer transition-all ${
+                        rechazoParcial
+                          ? 'bg-amber-50 border-amber-300'
+                          : 'bg-slate-50 border-slate-200'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={rechazoParcial}
+                        onChange={(e) => {
+                          setRechazoParcial(e.target.checked);
+                          if (e.target.checked) setRechazada100(false);
+                        }}
+                        className="w-5 h-5 accent-amber-600 [color-scheme:light]"
+                      />
+                      <span>
+                        <span className="block text-left text-sm font-bold text-slate-800">
+                          Rechazo parcial (opcional)
+                        </span>
+                        <span className="block text-left text-xs text-slate-500">
+                          {regPacking?.mermas > 0
+                            ? `Packing anotó ${regPacking.mermas} mermas: corrígelas si no coinciden`
+                            : 'Márcala si hay unidades mermadas o rechazadas'}
+                        </span>
+                      </span>
+                    </label>
+                    {rechazoParcial && (
+                      <div className="pl-3 border-l-2 border-amber-200">
+                        <label className={ESTILO_LABEL}>
+                          {(regPacking?.tipoCantidadTotal || regPacking?.tipoCantidad || tipoCantidad) === 'latas'
+                            ? 'Latas rechazadas'
+                            : 'Unidades rechazadas'}
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          inputMode="numeric"
+                          required
+                          value={mermasCC}
+                          onChange={(e) => setMermasCC(e.target.value)}
+                          className={ESTILO_INPUT}
+                        />
+                      </div>
+                    )}
                     <label
                       className={`flex items-center gap-3 p-4 rounded-2xl border cursor-pointer transition-all ${
                         rechazada100
@@ -1848,7 +1947,10 @@ export default function App() {
                       <input
                         type="checkbox"
                         checked={rechazada100}
-                        onChange={(e) => setRechazada100(e.target.checked)}
+                        onChange={(e) => {
+                          setRechazada100(e.target.checked);
+                          if (e.target.checked) setRechazoParcial(false);
+                        }}
                         className="w-5 h-5 accent-red-600 [color-scheme:light]"
                       />
                       <span>
@@ -1860,6 +1962,7 @@ export default function App() {
                         </span>
                       </span>
                     </label>
+                    </>
                   )}
 
                   {esControlSap && (

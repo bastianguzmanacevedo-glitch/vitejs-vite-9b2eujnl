@@ -232,6 +232,8 @@ export default function Inventario() {
           No hay artículos con estos filtros.
         </p>
       ) : (
+        // En el teléfono la lista se desliza hacia el lado, como en Monitoreo
+        <div className="overflow-x-auto">
         <div className="grid 2xl:grid-cols-2 items-start">
         {porGrupo.map(([nombreGrupo, lista]) => (
           <section key={nombreGrupo} className="px-4 sm:px-6 py-4">
@@ -339,6 +341,7 @@ export default function Inventario() {
             </ul>
           </section>
         ))}
+        </div>
         </div>
       )}
     </div>

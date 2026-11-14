@@ -11,8 +11,27 @@ import {
   query,
   Timestamp,
 } from 'firebase/firestore';
-import { Moon, RefreshCw, X } from 'lucide-react';
+import { Moon, RefreshCw, Smartphone, X } from 'lucide-react';
 import { db, storage } from './firebase';
+
+// Nombre y puesto que el operario guarda en su teléfono
+const CLAVE_RECORDADO = 'espigal_recordar_operario';
+export const leerRecordado = () => {
+  try {
+    const r = JSON.parse(localStorage.getItem(CLAVE_RECORDADO));
+    return r?.nombre ? r : null;
+  } catch {
+    return null;
+  }
+};
+export const guardarRecordado = (datos) => {
+  try {
+    if (datos) localStorage.setItem(CLAVE_RECORDADO, JSON.stringify(datos));
+    else localStorage.removeItem(CLAVE_RECORDADO);
+  } catch {
+    // Sin almacenamiento disponible: no se puede recordar en este teléfono.
+  }
+};
 
 const LIMITE_BYTES = 5 * 1024 ** 3; // 5 GB gratuitos de Firebase Storage
 const LIMITE_TEXTO = 1024 ** 3; // 1 GB gratuito de Firestore (texto)
@@ -219,7 +238,18 @@ const BloqueEspacio = ({ titulo, fraccion, listo, cargando, error, onMedir, chil
   </section>
 );
 
-export default function Ajustes({ onCerrar, oscuro, setOscuro }) {
+export default function Ajustes({ session, onCerrar, oscuro, setOscuro }) {
+  const esAdmin = session?.role === 'admin';
+  const [recordar, setRecordar] = useState(() => {
+    const r = leerRecordado();
+    return !!r && r.nombre === session?.user;
+  });
+  const cambiarRecordar = (activo) => {
+    setRecordar(activo);
+    guardarRecordado(
+      activo ? { nombre: session.user, etapa: session.etapa } : null
+    );
+  };
   const [medicion, setMedicion] = useState(null);
   const [progreso, setProgreso] = useState(null);
   const [error, setError] = useState('');
@@ -258,9 +288,11 @@ export default function Ajustes({ onCerrar, oscuro, setOscuro }) {
   };
 
   useEffect(() => {
+    // El espacio en la nube solo lo ve el administrador
+    if (!esAdmin) return;
     medir();
     medirBaseTexto();
-  }, []);
+  }, [esAdmin]);
 
   const fraccion = medicion ? medicion.total / LIMITE_BYTES : 0;
   const fraccionTexto = texto ? texto.total / LIMITE_TEXTO : 0;
@@ -288,6 +320,8 @@ export default function Ajustes({ onCerrar, oscuro, setOscuro }) {
           </button>
         </div>
 
+        {esAdmin ? (
+          <>
         <BloqueEspacio
           titulo="Espacio en la nube (fotos)"
           fraccion={fraccion}
@@ -343,6 +377,35 @@ export default function Ajustes({ onCerrar, oscuro, setOscuro }) {
             </>
           )}
         </BloqueEspacio>
+          </>
+        ) : (
+          <section>
+            <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3">
+              Este teléfono
+            </h3>
+            <label className="flex items-center justify-between gap-3 p-4 rounded-2xl border border-slate-200 bg-slate-50 cursor-pointer">
+              <span className="flex items-center gap-3">
+                <Smartphone className="w-5 h-5 text-slate-500 shrink-0" />
+                <span>
+                  <span className="block text-sm font-bold text-slate-800">
+                    Recordar mi nombre y puesto
+                  </span>
+                  <span className="text-xs text-slate-500">
+                    {session?.user} · {session?.etapa}. Al abrir la app ya
+                    estarán escritos.
+                  </span>
+                </span>
+              </span>
+              <input
+                type="checkbox"
+                role="switch"
+                checked={recordar}
+                onChange={(e) => cambiarRecordar(e.target.checked)}
+                className="w-5 h-5 accent-amber-700 [color-scheme:light] shrink-0"
+              />
+            </label>
+          </section>
+        )}
 
         <section>
           <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3">

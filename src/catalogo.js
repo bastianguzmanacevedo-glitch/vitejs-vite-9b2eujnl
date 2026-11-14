@@ -24,7 +24,7 @@ export const ETAPAS = [
   {
     id: 1,
     name: 'Bodega',
-    icon: Package,
+    icon: Wheat,
     description: 'Despacho de materias primas por carro',
   },
   {
@@ -36,13 +36,13 @@ export const ETAPAS = [
   {
     id: 3,
     name: 'Horneado',
-    icon: Wheat,
+    icon: CheckCircle,
     description: 'Fermentación y horneado de lotes',
   },
   {
     id: 4,
     name: 'Packing',
-    icon: CheckCircle,
+    icon: Package,
     description: 'Envasado y congelado final',
   },
   {

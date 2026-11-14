@@ -118,7 +118,8 @@ export default function Monitoreo() {
   const [filtroPan, setFiltroPan] = useState('');
   const [pagina, setPagina] = useState(1);
 
-  // Registros del rango (más unos días extra), en tiempo real
+  // Registros del rango (más unos días extra antes y después), en tiempo real.
+  // Los días previos sirven para saber si una OT ya pasó por Bodega.
   useEffect(() => {
     setLoading(true);
     const col = collection(db, COL_OTS);
@@ -126,7 +127,11 @@ export default function Monitoreo() {
       ? query(col, orderBy('createdAt', 'desc'))
       : query(
           col,
-          where('createdAt', '>=', Timestamp.fromDate(sumarDias(desde, 0))),
+          where(
+            'createdAt',
+            '>=',
+            Timestamp.fromDate(sumarDias(desde, -DIAS_EXTRA))
+          ),
           where(
             'createdAt',
             '<',
@@ -200,14 +205,34 @@ export default function Monitoreo() {
         enRango.filter((r) => r.etapa === e.name).map((r) => r.otNumber)
       ).size;
     });
+    // Bodega: además de las OT registradas en Bodega, cuentan las que pasaron
+    // a producción (Amasado, Horneado o Packing) sin registro en Bodega: su
+    // materia prima ya salió, igual que "Dosificadas" en Planificación y lotes.
+    // Control de calidad y Control SAP no cuentan: pueden registrarse días después.
+    const conBodega = new Set(
+      registros.filter((r) => r.etapa === 'Bodega').map((r) => r.otNumber)
+    );
+    const primeraPosterior = new Map();
+    registros.forEach((r) => {
+      if (!['Amasado', 'Horneado', 'Packing'].includes(r.etapa)) return;
+      const f = fechaRegistro(r);
+      const previa = primeraPosterior.get(r.otNumber);
+      if (!previa || f < previa) primeraPosterior.set(r.otNumber, f);
+    });
+    const bodegaDeducidas = [...primeraPosterior].filter(
+      ([ot, f]) =>
+        !conBodega.has(ot) && (todo || (f >= desde && f <= hasta))
+    ).length;
+    porEtapa.Bodega += bodegaDeducidas;
     return {
+      bodegaDeducidas,
       planificadas: planSet.size,
       fabricadasPlan,
       fabricadasRango: fabricadasRango.size,
       fueraPlan,
       porEtapa,
     };
-  }, [registros, enRango, plan]);
+  }, [registros, enRango, plan, desde, hasta, todo]);
 
   const filtrados = useMemo(() => {
     const t = searchTerm.trim().toLowerCase();
@@ -275,6 +300,7 @@ export default function Monitoreo() {
       'Cajas',
       'OF PT',
       'Rechazada 100%',
+      'Rechazo parcial',
       'Corregido en horno',
       'Liberación en horno',
       'Rechazadas en horno',
@@ -298,6 +324,7 @@ export default function Monitoreo() {
       ot.cajas,
       ot.ofPT,
       ot.rechazada100 ? 'Si' : '',
+      ot.rechazoParcial ? 'Si' : '',
       ot.cantidadCorregida,
       RESULTADOS_CALIDAD[ot.resultadoCalidad] || '',
       ot.unidadesRechazadas,
@@ -456,6 +483,11 @@ export default function Monitoreo() {
               </p>
               <etapa.icon className="w-6 h-6 text-slate-200" />
             </div>
+            {etapa.name === 'Bodega' && resumen.bodegaDeducidas > 0 && (
+              <p className="text-[10px] font-medium text-slate-400 mt-1 leading-tight">
+                {resumen.bodegaDeducidas} sin registro en Bodega (ya avanzaron)
+              </p>
+            )}
           </div>
         ))}
       </div>
@@ -584,6 +616,10 @@ export default function Monitoreo() {
                       {ot.rechazada100 ? (
                         <span className="inline-flex px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200">
                           Rechazada 100%
+                        </span>
+                      ) : ot.rechazoParcial ? (
+                        <span className="inline-flex px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                          Rechazo parcial: {ot.mermas} {ot.tipoCantidad || 'unidades'}
                         </span>
                       ) : (
                         textoProduccion(ot, { conCalidad: false }) || (
