@@ -161,7 +161,9 @@ const TarjetaOt = ({ info, amasado, horneado, packing, origen }) => {
   if (amasado?.carros?.length > 1) {
     filas.push([
       'Por carro',
-      amasado.carros.map((c) => `Carro ${c.carro}: ${c.cantidad}`).join(' · '),
+      amasado.carros
+        .map((c) => `Carro ${c.carro}: ${c.cantidad ?? 'pendiente'}`)
+        .join(' · '),
     ]);
   }
   if (horneado?.cantidadCorregida != null) {
@@ -616,6 +618,73 @@ export default function App() {
     setInfoOt(null);
   };
 
+  // Packing con varios carros: los carros que Amasado no tenía se agregan a
+  // su registro (N° y cantidad), y el N° de carro se actualiza en Horneado y
+  // las demás etapas. Lo que ya tenía Amasado se mantiene; lo original queda
+  // en carroAnterior / cantidadAnterior. Un fallo aquí no afecta a Packing.
+  const sincronizarCarrosAnteriores = async (
+    datosPrevios,
+    carrosPacking,
+    fechaStr,
+    horaStr
+  ) => {
+    try {
+      const amasado = datosPrevios.find((d) => d.etapa === 'Amasado');
+      let batchesNuevo = carrosPacking.map((c) => c.numero).join('-');
+      let anterior = '';
+      if (amasado) {
+        anterior = String(amasado.batches || '');
+        const lista = amasado.carros?.length
+          ? amasado.carros.map((c) => ({ carro: String(c.carro), cantidad: c.cantidad ?? null }))
+          : anterior
+          ? anterior.split('-').map((n, _, todos) => ({
+              carro: n,
+              cantidad: todos.length === 1 ? amasado.cantidadProducida ?? null : null,
+            }))
+          : [];
+        let cambio = false;
+        for (const c of carrosPacking) {
+          const existente = lista.find((x) => Number(x.carro) === Number(c.numero));
+          if (!existente) {
+            lista.push({ carro: String(c.numero), cantidad: c.cantidad ?? null });
+            cambio = true;
+          } else if (existente.cantidad == null && c.cantidad != null) {
+            existente.cantidad = c.cantidad;
+            cambio = true;
+          }
+        }
+        if (!cambio) return;
+        batchesNuevo = lista.map((c) => c.carro).join('-');
+        const total = lista.reduce((a, c) => a + (c.cantidad ?? 0), 0);
+        const cambios = {
+          carros: lista,
+          batches: batchesNuevo,
+          cantidadProducida: total,
+          carrosCorregidosPor: `${session.user} (Packing)`,
+          carrosCorregidosEn: `${fechaStr} ${horaStr}`,
+        };
+        if (anterior !== batchesNuevo && amasado.carroAnterior == null) {
+          cambios.carroAnterior = anterior;
+        }
+        if (amasado.cantidadProducida !== total && amasado.cantidadAnterior == null) {
+          cambios.cantidadAnterior = amasado.cantidadProducida ?? null;
+        }
+        await updateDoc(doc(db, COL_OTS, amasado.id), cambios);
+      }
+      for (const d of datosPrevios) {
+        if (['Amasado', 'Bodega', 'Packing'].includes(d.etapa)) continue;
+        const actual = String(d.batches || '');
+        if (actual === batchesNuevo) continue;
+        await updateDoc(doc(db, COL_OTS, d.id), {
+          batches: batchesNuevo,
+          carroAnterior: d.carroAnterior ?? actual,
+        });
+      }
+    } catch (err) {
+      console.error('No se pudieron actualizar Amasado y Horneado:', err);
+    }
+  };
+
   const handleSubmitRegistro = async (e) => {
     e.preventDefault();
     const otNumber = numOt.trim();
@@ -945,6 +1014,7 @@ export default function App() {
           }
           throw err;
         });
+        await sincronizarCarrosAnteriores(datosPrevios, carros, fechaStr, horaStr);
         const pendientes = carros.filter((c) => !carroCompleto(c));
         setSuccessMsg(
           pendientes.length
@@ -1005,6 +1075,7 @@ export default function App() {
           if (mermas !== '') cambios.mermas = (pk.mermas || 0) + Number(mermas);
           tx.update(refPk, cambios);
         });
+        await sincronizarCarrosAnteriores(datosPrevios, carros, fechaStr, horaStr);
         const pendientes = carros.filter((c) => !carroCompleto(c));
         setSuccessMsg(
           `¡Carro ${nuevoPk.numero} agregado a la OT #${otNumber}! Carros: ${carros
@@ -1145,6 +1216,16 @@ export default function App() {
         fechaStr,
         horaStr,
       });
+
+      // Packing con doble carro: Amasado y Horneado reciben los carros nuevos
+      if (etapa === 'Packing' && datosEtapa.carros?.length > 1) {
+        await sincronizarCarrosAnteriores(
+          datosPrevios,
+          datosEtapa.carros,
+          fechaStr,
+          horaStr
+        );
+      }
 
       // Si se subió una foto nueva, borra las fotos de etapas anteriores
       // para dejar solo una foto por OT y ahorrar espacio en Storage.
