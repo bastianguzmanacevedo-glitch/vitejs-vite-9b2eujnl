@@ -12,6 +12,7 @@ import {
   getDoc,
   updateDoc,
   doc,
+  runTransaction,
   Timestamp,
 } from 'firebase/firestore';
 import {
@@ -227,6 +228,11 @@ export default function App() {
   // Packing con doble carro: N°, cantidad y cajas de cada carro
   const [carrosPk, setCarrosPk] = useState(() => [carroPkVacio(), carroPkVacio()]);
   const [tipoPk, setTipoPk] = useState('unidades');
+  // Packing ya registrado: agregar otro carro (doble carro que no se anotó antes)
+  const [agregaPk, setAgregaPk] = useState(false);
+  const [nuevoPk, setNuevoPk] = useState(() => carroPkVacio());
+  // Si el Packing guardado era de un solo carro, se completa su N° y cantidad
+  const [carro1Pk, setCarro1Pk] = useState({ numero: '', cantidad: '' });
   const [cajas, setCajas] = useState('');
   const [ofPT, setOfPT] = useState('');
   const [rechazada100, setRechazada100] = useState(false);
@@ -298,6 +304,11 @@ export default function App() {
   // El Packing de la OT quedó con un carro pendiente: se completa ese registro
   const completarPacking =
     etapaActual === 'Packing' && regPacking?.carrosCompletos === false;
+  // El Packing de la OT ya está completo: se le puede agregar otro carro
+  const agregarPacking =
+    etapaActual === 'Packing' && !!regPacking && !completarPacking;
+  // El Packing guardado no tiene detalle por carro (se registró con un carro)
+  const convertirPacking = agregarPacking && !(regPacking.carros?.length > 0);
   const datosOt =
     regAmasado ||
     infoVigente?.registros.find(
@@ -434,9 +445,21 @@ export default function App() {
       amasado ||
       regs.find((r) => r.categoria && r.categoria !== 'No especificada') ||
       infoOt.plan;
-    setTipoPk(
-      CATEGORIAS_EN_LATAS.includes(origen?.categoria) ? 'latas' : 'unidades'
-    );
+    const tipoOrigenPk = CATEGORIAS_EN_LATAS.includes(origen?.categoria)
+      ? 'latas'
+      : 'unidades';
+    if (packing) {
+      // Ya registrada en Packing: queda lista para agregar otro carro
+      setTipoPk(packing.tipoCantidadTotal || packing.tipoCantidad || tipoOrigenPk);
+      setAgregaPk(false);
+      setNuevoPk(carroPkVacio());
+      setCarro1Pk({
+        numero: String(packing.batches || amasado?.batches || '').split('-')[0],
+        cantidad: String(amasado?.cantidadProducida ?? ''),
+      });
+      return;
+    }
+    setTipoPk(tipoOrigenPk);
     const numeros =
       amasado?.carros?.length > 1
         ? amasado.carros.map((c) => String(c.carro))
@@ -571,6 +594,9 @@ export default function App() {
     setCantidad2('');
     setCarrosPk([carroPkVacio(), carroPkVacio()]);
     setTipoPk('unidades');
+    setAgregaPk(false);
+    setNuevoPk(carroPkVacio());
+    setCarro1Pk({ numero: '', cantidad: '' });
     setCajas('');
     setMermas('');
     setOfPT('');
@@ -617,7 +643,36 @@ export default function App() {
         return setErrorMsg('Ingresa la cantidad del segundo carro');
       }
     }
-    const usaCarrosPk = etapa === 'Packing' && (dobleCarro || completarPacking);
+    if (etapa === 'Packing' && agregarPacking) {
+      if (!agregaPk) {
+        return setErrorMsg(
+          `La OT #${otNumber} ya fue registrada en Packing. Si salió en otro carro, marca "Doble carro" para agregarlo.`
+        );
+      }
+      if (convertirPacking) {
+        if (!ES_ENTERO.test(carro1Pk.numero.trim())) {
+          return setErrorMsg('Ingresa el N° del carro ya empacado');
+        }
+        if (
+          !ES_ENTERO.test(String(carro1Pk.cantidad).trim()) ||
+          Number(carro1Pk.cantidad) <= 0
+        ) {
+          return setErrorMsg(
+            `Ingresa ${tipoPk === 'latas' ? 'las latas' : 'las unidades'} del carro ya empacado`
+          );
+        }
+      }
+      if (!ES_ENTERO.test(String(nuevoPk.numero).trim())) {
+        return setErrorMsg('Ingresa el N° del carro que vas a agregar');
+      }
+      const errorNuevo = errorCarroPk(nuevoPk, 1);
+      if (errorNuevo) return setErrorMsg(errorNuevo);
+      if (!carroPkLleno(nuevoPk)) {
+        return setErrorMsg('Ingresa la cantidad y las cajas del carro que vas a agregar');
+      }
+    }
+    const usaCarrosPk =
+      etapa === 'Packing' && !agregarPacking && (dobleCarro || completarPacking);
     if (usaCarrosPk) {
       for (const [i, c] of carrosPk.entries()) {
         if (!ES_ENTERO.test(String(c.numero).trim())) {
@@ -846,42 +901,119 @@ export default function App() {
           );
           return;
         }
-        const tipo = previoPacking.tipoCantidadTotal || tipoPk;
+        // En una transacción: si otra sala guarda su carro al mismo tiempo,
+        // se trabaja sobre lo último guardado y no se pierde ningún carro
         const agregados = [];
-        const carros = (previoPacking.carros || []).map((c) => {
-          if (carroCompleto(c)) return c;
-          const f = carrosPk.find((x) => String(x.numero) === String(c.numero));
-          if (!f || !carroPkLleno(f)) return c;
-          agregados.push(c.numero);
-          return {
-            ...c,
-            cantidad: Number(f.cantidad),
+        let carros = [];
+        const refPk = doc(db, COL_OTS, previoPacking.id);
+        await runTransaction(db, async (tx) => {
+          const pk = (await tx.get(refPk)).data();
+          const tipo = pk.tipoCantidadTotal || tipoPk;
+          agregados.length = 0;
+          carros = (pk.carros || []).map((c) => {
+            if (carroCompleto(c)) return c;
+            const f = carrosPk.find((x) => String(x.numero) === String(c.numero));
+            if (!f || !carroPkLleno(f)) return c;
+            agregados.push(c.numero);
+            return {
+              ...c,
+              cantidad: Number(f.cantidad),
+              tipoCantidad: tipo,
+              cajas: Number(f.cajas),
+              operario: session.user,
+              fechaStr,
+              horaStr,
+            };
+          });
+          if (!agregados.length) throw new Error('SIN_CARRO');
+          if (new Set(carros.map((c) => c.tipoCantidad)).size > 1) {
+            throw new Error('MEZCLA');
+          }
+          const cambios = {
+            carros,
+            ...resumenCarros(carros, tipo),
             tipoCantidad: tipo,
-            cajas: Number(f.cajas),
-            operario: session.user,
-            fechaStr,
-            horaStr,
           };
+          if (mermas !== '') cambios.mermas = (pk.mermas || 0) + Number(mermas);
+          tx.update(refPk, cambios);
+        }).catch((err) => {
+          if (err.message === 'SIN_CARRO') {
+            throw new Error('AVISO:Ese carro ya fue registrado por otra persona. Vuelve a ingresar la OT.');
+          }
+          if (err.message === 'MEZCLA') {
+            throw new Error('AVISO:No se pueden mezclar unidades y latas en una misma OT');
+          }
+          throw err;
         });
-        if (!agregados.length) {
-          setErrorMsg('Ingresa la cantidad y las cajas del carro pendiente');
-          return;
-        }
-        if (new Set(carros.map((c) => c.tipoCantidad)).size > 1) {
-          setErrorMsg('No se pueden mezclar unidades y latas en una misma OT');
-          return;
-        }
-        const resumen = resumenCarros(carros, tipo);
-        const cambios = { carros, ...resumen, tipoCantidad: tipo };
-        if (mermas !== '') {
-          cambios.mermas = (previoPacking.mermas || 0) + Number(mermas);
-        }
-        await updateDoc(doc(db, COL_OTS, previoPacking.id), cambios);
         const pendientes = carros.filter((c) => !carroCompleto(c));
         setSuccessMsg(
           pendientes.length
             ? `¡Carro ${agregados.join(' y ')} de la OT #${otNumber} registrado! Aún falta carro ${pendientes.map((c) => c.numero).join(' y ')}.`
             : `¡Carro ${agregados.join(' y ')} registrado! La OT #${otNumber} quedó con todos sus carros empacados.`
+        );
+        limpiarFormulario();
+        return;
+      }
+
+      // Packing ya registrado: se agrega otro carro al mismo registro (doble
+      // carro que no se anotó en Amasado). Un registro de un solo carro pasa
+      // a tener detalle por carro: el ya empacado y el nuevo.
+      if (etapa === 'Packing' && previoPacking && agregaPk) {
+        if (!agregarPacking) {
+          setErrorMsg('Vuelve a ingresar la OT para agregar el carro.');
+          return;
+        }
+        const refPk = doc(db, COL_OTS, previoPacking.id);
+        let carros = [];
+        await runTransaction(db, async (tx) => {
+          const pk = (await tx.get(refPk)).data();
+          const tipo = pk.tipoCantidadTotal || pk.tipoCantidad || tipoPk;
+          carros = pk.carros?.length
+            ? [...pk.carros]
+            : [
+                {
+                  numero: carro1Pk.numero.trim(),
+                  cantidad: Number(carro1Pk.cantidad),
+                  tipoCantidad: tipo,
+                  cajas: pk.cajas ?? 0,
+                  operario: pk.operario || '',
+                  fechaStr: pk.fechaStr || '',
+                  horaStr: pk.horaStr || '',
+                },
+              ];
+          const numero = String(nuevoPk.numero).trim();
+          if (carros.some((c) => Number(c.numero) === Number(numero))) {
+            throw new Error('AVISO:Ese N° de carro ya está registrado en esta OT');
+          }
+          if (carros.some((c) => c.tipoCantidad && c.tipoCantidad !== tipo)) {
+            throw new Error('AVISO:No se pueden mezclar unidades y latas en una misma OT');
+          }
+          carros.push({
+            numero,
+            cantidad: Number(nuevoPk.cantidad),
+            tipoCantidad: tipo,
+            cajas: Number(nuevoPk.cajas),
+            operario: session.user,
+            fechaStr,
+            horaStr,
+          });
+          const cambios = {
+            carros,
+            ...resumenCarros(carros, tipo),
+            tipoCantidad: tipo,
+          };
+          if (mermas !== '') cambios.mermas = (pk.mermas || 0) + Number(mermas);
+          tx.update(refPk, cambios);
+        });
+        const pendientes = carros.filter((c) => !carroCompleto(c));
+        setSuccessMsg(
+          `¡Carro ${nuevoPk.numero} agregado a la OT #${otNumber}! Carros: ${carros
+            .map((c) => c.numero)
+            .join('-')}.${
+            pendientes.length
+              ? ` Aún falta carro ${pendientes.map((c) => c.numero).join(' y ')}.`
+              : ''
+          }`
         );
         limpiarFormulario();
         return;
@@ -1036,7 +1168,11 @@ export default function App() {
       limpiarFormulario();
     } catch (err) {
       console.error(err);
-      setErrorMsg('Error al guardar. Verifica tu conexión a internet.');
+      setErrorMsg(
+        err?.message?.startsWith('AVISO:')
+          ? err.message.slice(6)
+          : 'Error al guardar. Verifica tu conexión a internet.'
+      );
     } finally {
       setUploading(false);
     }
@@ -1858,7 +1994,190 @@ export default function App() {
                           anota las mermas.
                         </div>
                       )}
-                      {completarPacking ? (
+                      {agregarPacking ? (
+                        <div className="p-4 rounded-2xl border border-emerald-200 bg-emerald-50/60 space-y-4">
+                          <div>
+                            <p className="text-sm font-black text-emerald-900">
+                              Esta OT ya está registrada en Packing
+                            </p>
+                            {regPacking.carros?.length > 0 ? (
+                              <ul className="mt-1 space-y-0.5">
+                                {regPacking.carros.map((c, i) => (
+                                  <li key={i} className="text-xs text-slate-600">
+                                    <span className="font-bold text-slate-800">
+                                      Carro {c.numero}:
+                                    </span>{' '}
+                                    {c.cantidad} {c.tipoCantidad} · {c.cajas} cajas ·{' '}
+                                    {c.operario} {c.horaStr}
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <p className="text-xs text-slate-600">
+                                {regPacking.batches
+                                  ? `Carro ${regPacking.batches}: `
+                                  : ''}
+                                {regPacking.cajas ?? 0} cajas · {regPacking.operario}{' '}
+                                {regPacking.horaStr}
+                              </p>
+                            )}
+                          </div>
+
+                          <label
+                            className={`flex items-center gap-3 p-3.5 rounded-2xl border cursor-pointer transition-all ${
+                              agregaPk
+                                ? 'bg-amber-50 border-amber-300'
+                                : 'bg-white border-slate-200'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={agregaPk}
+                              onChange={(e) => setAgregaPk(e.target.checked)}
+                              className="w-5 h-5 accent-amber-600 [color-scheme:light]"
+                            />
+                            <span>
+                              <span className="block text-left text-sm font-bold text-slate-800">
+                                Doble carro (opcional)
+                              </span>
+                              <span className="block text-left text-xs text-slate-500">
+                                Márcala si la OT salió en otro carro que no se
+                                anotó: se agrega a este mismo registro
+                              </span>
+                            </span>
+                          </label>
+
+                          {agregaPk && (
+                            <div className="space-y-4">
+                              {convertirPacking && (
+                                <div className="pl-3 border-l-2 border-emerald-300 space-y-2">
+                                  <p className="text-xs font-black text-slate-700">
+                                    Carro ya empacado ({regPacking.cajas ?? 0} cajas)
+                                  </p>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                      <label className={ESTILO_LABEL}>N° carro</label>
+                                      <input
+                                        type="text"
+                                        inputMode="numeric"
+                                        value={carro1Pk.numero}
+                                        onChange={(e) =>
+                                          setCarro1Pk((c) => ({
+                                            ...c,
+                                            numero: e.target.value.replace(/\D/g, ''),
+                                          }))
+                                        }
+                                        placeholder="Ej. 28"
+                                        className={ESTILO_INPUT}
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className={ESTILO_LABEL}>
+                                        {tipoPk === 'latas' ? 'Latas' : 'Unidades'}
+                                      </label>
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        step="1"
+                                        inputMode="numeric"
+                                        value={carro1Pk.cantidad}
+                                        onChange={(e) =>
+                                          setCarro1Pk((c) => ({
+                                            ...c,
+                                            cantidad: e.target.value,
+                                          }))
+                                        }
+                                        className={ESTILO_INPUT}
+                                      />
+                                    </div>
+                                  </div>
+                                  <p className="text-[11px] text-slate-500">
+                                    Viene de Amasado: corrígelo si no coincide.
+                                  </p>
+                                </div>
+                              )}
+
+                              <div className="pl-3 border-l-2 border-amber-300 space-y-2">
+                                <p className="text-xs font-black text-amber-900">
+                                  Carro que vas a agregar
+                                </p>
+                                <div className="grid grid-cols-3 gap-2">
+                                  <div>
+                                    <label className={ESTILO_LABEL}>N° carro</label>
+                                    <input
+                                      type="text"
+                                      inputMode="numeric"
+                                      value={nuevoPk.numero}
+                                      onChange={(e) =>
+                                        setNuevoPk((c) => ({
+                                          ...c,
+                                          numero: e.target.value.replace(/\D/g, ''),
+                                        }))
+                                      }
+                                      placeholder="Ej. 17"
+                                      className={ESTILO_INPUT}
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className={ESTILO_LABEL}>
+                                      {tipoPk === 'latas' ? 'Latas' : 'Unidades'}
+                                    </label>
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      step="1"
+                                      inputMode="numeric"
+                                      value={nuevoPk.cantidad}
+                                      onChange={(e) =>
+                                        setNuevoPk((c) => ({
+                                          ...c,
+                                          cantidad: e.target.value,
+                                        }))
+                                      }
+                                      className={ESTILO_INPUT}
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className={ESTILO_LABEL}>Cajas</label>
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      step="1"
+                                      inputMode="numeric"
+                                      value={nuevoPk.cajas}
+                                      onChange={(e) =>
+                                        setNuevoPk((c) => ({
+                                          ...c,
+                                          cajas: e.target.value,
+                                        }))
+                                      }
+                                      className={ESTILO_INPUT}
+                                    />
+                                  </div>
+                                </div>
+                                <p className="text-[11px] text-slate-500">
+                                  Se cuenta en {tipoPk}, igual que el carro ya
+                                  registrado.
+                                </p>
+                              </div>
+                              <div>
+                                <label className={ESTILO_LABEL}>
+                                  Mermas de este carro (opcional)
+                                </label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  inputMode="numeric"
+                                  value={mermas}
+                                  onChange={(e) => setMermas(e.target.value)}
+                                  placeholder={tipoPk === 'latas' ? 'Latas' : 'Unidades'}
+                                  className={ESTILO_INPUT}
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ) : completarPacking ? (
                         <div className="p-4 rounded-2xl border border-amber-300 bg-amber-50/70 space-y-4">
                           <div>
                             <p className="text-sm font-black text-amber-900">
@@ -2303,6 +2622,8 @@ export default function App() {
                           ? 'Guardar control de calidad'
                           : completarPacking
                           ? 'Guardar carro pendiente'
+                          : agregarPacking
+                          ? 'Agregar carro'
                           : `Registrar OT en ${session.etapa}`}
                       </>
                     )}
