@@ -494,11 +494,6 @@ export default function Monitoreo() {
               </p>
               <etapa.icon className="w-6 h-6 text-slate-200" />
             </div>
-            {etapa.name === 'Bodega' && resumen.bodegaDeducidas > 0 && (
-              <p className="text-[10px] font-medium text-slate-400 mt-1 leading-tight">
-                {resumen.bodegaDeducidas} sin registro en Bodega (ya avanzaron)
-              </p>
-            )}
           </div>
         ))}
       </div>
