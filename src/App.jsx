@@ -239,6 +239,12 @@ export default function App() {
   const [unidadesRechazadas, setUnidadesRechazadas] = useState('');
   // Calidad en horno: N° de carro (lo puede corregir si Amasado lo ingresó mal)
   const [carroHorno, setCarroHorno] = useState('');
+  // Calidad (en horno o etapa 5): doble carro que Amasado olvidó registrar
+  const [dobleCorr, setDobleCorr] = useState(false);
+  const [carrosCorr, setCarrosCorr] = useState([
+    { carro: '', cantidad: '' },
+    { carro: '', cantidad: '' },
+  ]);
   const [mermas, setMermas] = useState('');
   // Lo que ya se sabe de la OT ingresada (registros y planificación)
   const [infoOt, setInfoOt] = useState(null);
@@ -452,6 +458,36 @@ export default function App() {
     setMermasCC(tieneMermas ? String(packing.mermas) : '');
   }, [infoOt, etapaActual]);
 
+  // Calidad (en horno o etapa 5) parte con los carros que registró Amasado
+  const editaCarros = esCalidadHorno || etapaActual === 'Control de calidad';
+  useEffect(() => {
+    if (!editaCarros || !infoOt || infoOt.cargando) return;
+    const amasado = infoOt.registros.find((r) => r.etapa === 'Amasado');
+    if (amasado?.carros?.length > 1) {
+      setDobleCorr(true);
+      setCarrosCorr(
+        amasado.carros.map((c) => ({
+          carro: String(c.carro ?? ''),
+          cantidad: String(c.cantidad ?? ''),
+        }))
+      );
+    } else {
+      setDobleCorr(false);
+      setCarrosCorr([
+        {
+          carro: String(amasado?.batches || ''),
+          cantidad: String(amasado?.cantidadProducida ?? ''),
+        },
+        { carro: '', cantidad: '' },
+      ]);
+    }
+  }, [infoOt, editaCarros]);
+
+  const cambiarCarroCorr = (i, campo, valor) =>
+    setCarrosCorr((lista) =>
+      lista.map((c, j) => (j === i ? { ...c, [campo]: valor } : c))
+    );
+
   // Registros recientes (el panel de monitoreo carga los suyos por fecha)
   useEffect(() => {
     const desde = new Date();
@@ -546,6 +582,11 @@ export default function App() {
     setResultadoCalidad('aprobada');
     setUnidadesRechazadas('');
     setCarroHorno('');
+    setDobleCorr(false);
+    setCarrosCorr([
+      { carro: '', cantidad: '' },
+      { carro: '', cantidad: '' },
+    ]);
     setInfoOt(null);
   };
 
@@ -603,8 +644,28 @@ export default function App() {
     if (etapa === 'Horneado' && !esCalidadHorno && !horneadoOk) {
       return setErrorMsg('Marca la casilla "Horneado" para confirmar');
     }
+    const usaDobleCorr = editaCarros && dobleCorr;
+    if (usaDobleCorr) {
+      for (const [i, c] of carrosCorr.entries()) {
+        if (!ES_ENTERO.test(c.carro.trim())) {
+          return setErrorMsg(`Ingresa el N° del carro ${i + 1}`);
+        }
+        if (!ES_ENTERO.test(String(c.cantidad).trim())) {
+          return setErrorMsg(
+            `Ingresa ${tipoCantidad === 'latas' ? 'las latas' : 'las unidades'} del carro ${i + 1} (número entero)`
+          );
+        }
+      }
+      const nums = carrosCorr.map((c) => Number(c.carro));
+      if (new Set(nums).size !== nums.length) {
+        return setErrorMsg('Hay dos carros con el mismo número');
+      }
+    }
     if (esCalidadHorno) {
-      if (cantidadCorregida === '' || Number(cantidadCorregida) < 0) {
+      if (
+        !usaDobleCorr &&
+        (cantidadCorregida === '' || Number(cantidadCorregida) < 0)
+      ) {
         return setErrorMsg(
           esUnitario ? 'Ingresa las unidades producidas' : 'Ingresa las latas producidas'
         );
@@ -612,7 +673,7 @@ export default function App() {
       if (resultadoCalidad === 'parcial' && !(Number(unidadesRechazadas) > 0)) {
         return setErrorMsg('Ingresa cuántas unidades se rechazaron');
       }
-      const carroH = carroHorno.trim();
+      const carroH = usaDobleCorr ? '' : carroHorno.trim();
       if (carroH && !FORMATO_CARRO.test(carroH)) {
         return setErrorMsg('El N° de carro debe ser un número o carros separados por guion, ej. 38-17');
       }
@@ -649,6 +710,70 @@ export default function App() {
       const previoAmasado = datosPrevios.find((d) => d.etapa === 'Amasado');
       const previoHorneado = datosPrevios.find((d) => d.etapa === 'Horneado');
 
+      // Doble carro que Amasado olvidó registrar: calidad (en horno o en la
+      // etapa 5) lo completa en el registro de Amasado, y el N° de carro se
+      // corrige en las etapas siguientes que tenían el carro anterior.
+      let carrosCorregidos = null;
+      if (usaDobleCorr) {
+        const lista = carrosCorr.map((c) => ({
+          carro: c.carro.trim(),
+          cantidad: Number(c.cantidad),
+        }));
+        const batchesNuevo = lista.map((c) => c.carro).join('-');
+        const total = lista.reduce((a, c) => a + c.cantidad, 0);
+        const anterior = String(
+          previoAmasado?.batches || previoHorneado?.batches || ''
+        );
+        const sinCambios =
+          previoAmasado?.carros?.length === lista.length &&
+          previoAmasado.carros.every(
+            (c, i) =>
+              String(c.carro) === lista[i].carro &&
+              c.cantidad === lista[i].cantidad
+          );
+        if (!sinCambios) {
+          if (previoAmasado) {
+            const cambios = {
+              carros: lista,
+              batches: batchesNuevo,
+              cantidadProducida: total,
+              carrosCorregidosPor: session.user,
+              carrosCorregidosEn: `${fechaStr} ${horaStr}`,
+            };
+            // Se guarda lo que registró Amasado originalmente (la primera vez)
+            if (anterior !== batchesNuevo && previoAmasado.carroAnterior == null) {
+              cambios.carroAnterior = anterior;
+            }
+            if (
+              previoAmasado.cantidadProducida !== total &&
+              previoAmasado.cantidadAnterior == null
+            ) {
+              cambios.cantidadAnterior = previoAmasado.cantidadProducida ?? null;
+            }
+            await updateDoc(doc(db, COL_OTS, previoAmasado.id), cambios);
+            Object.assign(previoAmasado, cambios);
+          }
+          if (anterior !== batchesNuevo) {
+            for (const d of datosPrevios) {
+              if (d.etapa === 'Amasado' || d.etapa === 'Bodega') continue;
+              // En horno, el registro de Horneado se actualiza más abajo
+              if (esCalidadHorno && d.etapa === 'Horneado') continue;
+              if (String(d.batches || '') !== anterior) continue;
+              await updateDoc(doc(db, COL_OTS, d.id), {
+                batches: batchesNuevo,
+                carroAnterior: d.carroAnterior ?? anterior,
+              });
+              d.batches = batchesNuevo;
+            }
+          }
+        }
+        carrosCorregidos = { batches: batchesNuevo, total, anterior, sinCambios };
+      }
+      const notaCarros =
+        carrosCorregidos && !carrosCorregidos.sinCambios
+          ? ` Doble carro guardado: ${carrosCorregidos.batches} (${carrosCorregidos.total} ${tipoCantidad}).`
+          : '';
+
       // Control de calidad en horno: unidades corregidas y rechazos
       let datosCalidad = {};
       if (esCalidadHorno) {
@@ -658,12 +783,22 @@ export default function App() {
           resultadoCalidad,
           unidadesRechazadas:
             resultadoCalidad === 'parcial' ? Number(unidadesRechazadas) : null,
+          // Con doble carro corregido, lo producido queda en Amasado (la suma)
           cantidadCorregida:
-            corregida != null && corregida !== contadas ? corregida : null,
+            !carrosCorregidos && corregida !== contadas ? corregida : null,
           revisadoPor: session.user,
           revisadoFecha: fechaStr,
           revisadoHora: horaStr,
         };
+        if (carrosCorregidos) {
+          datosCalidad.batches = carrosCorregidos.batches;
+          if (
+            carrosCorregidos.anterior !== carrosCorregidos.batches &&
+            previoHorneado?.carroAnterior == null
+          ) {
+            datosCalidad.carroAnterior = carrosCorregidos.anterior;
+          }
+        }
 
         // Carro corregido en horno: se corrige también en los registros de la
         // OT que tenían el carro anterior (Amasado y siguientes), porque las
@@ -671,7 +806,7 @@ export default function App() {
         const carroAnterior = String(
           previoHorneado?.batches || previoAmasado?.batches || ''
         );
-        const carroNuevo = carroHorno.trim();
+        const carroNuevo = carrosCorregidos ? '' : carroHorno.trim();
         if (carroNuevo && carroNuevo !== carroAnterior) {
           datosCalidad.batches = carroNuevo;
           datosCalidad.carroAnterior = carroAnterior;
@@ -696,7 +831,7 @@ export default function App() {
       if (esCalidadHorno && previoHorneado) {
         await updateDoc(doc(db, COL_OTS, previoHorneado.id), datosCalidad);
         setSuccessMsg(
-          `¡Control de calidad en horno guardado para la OT #${otNumber}!`
+          `¡Control de calidad en horno guardado para la OT #${otNumber}!${notaCarros}`
         );
         limpiarFormulario();
         return;
@@ -892,7 +1027,7 @@ export default function App() {
       setSuccessMsg(
         faltan.length
           ? `¡OT #${otNumber} registrada en Packing! Falta carro ${faltan.join(' y ')}: se completa ingresando la misma OT.`
-          : `¡OT #${otNumber} registrada exitosamente en ${etapa}!`
+          : `¡OT #${otNumber} registrada exitosamente en ${etapa}!${notaCarros}`
       );
       // Se mantiene la variedad: suelen venir muchas OT seguidas de la misma
       if (pideCarro) {
@@ -905,6 +1040,79 @@ export default function App() {
     } finally {
       setUploading(false);
     }
+  };
+
+  // Casilla "Doble carro" de calidad (en horno y etapa 5): completa el
+  // segundo carro si Amasado olvidó registrarlo
+  const bloqueDobleCarro = () => {
+    const total = carrosCorr.reduce((a, c) => a + Number(c.cantidad || 0), 0);
+    return (
+      <div className="space-y-3">
+        <label
+          className={`flex items-center gap-3 p-3.5 rounded-2xl border cursor-pointer transition-all ${
+            dobleCorr
+              ? 'bg-amber-50 border-amber-300'
+              : 'bg-white border-slate-200'
+          }`}
+        >
+          <input
+            type="checkbox"
+            checked={dobleCorr}
+            onChange={(e) => setDobleCorr(e.target.checked)}
+            className="w-5 h-5 accent-amber-600 [color-scheme:light]"
+          />
+          <span>
+            <span className="block text-left text-sm font-bold text-slate-800">
+              Doble carro
+            </span>
+            <span className="block text-left text-xs text-slate-500">
+              {regAmasado?.carros?.length > 1
+                ? 'Amasado registró dos carros: corrígelos si no coinciden'
+                : 'Márcala si en Amasado olvidaron registrar el segundo carro'}
+            </span>
+          </span>
+        </label>
+        {dobleCorr && (
+          <div className="space-y-3 pl-3 border-l-2 border-amber-200">
+            {carrosCorr.map((c, i) => (
+              <div key={i} className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className={ESTILO_LABEL}>Carro {i + 1}: N° de carro</label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={c.carro}
+                    onChange={(e) =>
+                      cambiarCarroCorr(i, 'carro', e.target.value.replace(/\D/g, ''))
+                    }
+                    placeholder="Ej. 38"
+                    className={ESTILO_INPUT}
+                  />
+                </div>
+                <div>
+                  <label className={ESTILO_LABEL}>
+                    Carro {i + 1}: {tipoCantidad === 'latas' ? 'Latas' : 'Unidades'}
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    inputMode="numeric"
+                    value={c.cantidad}
+                    onChange={(e) => cambiarCarroCorr(i, 'cantidad', e.target.value)}
+                    className={ESTILO_INPUT}
+                  />
+                </div>
+              </div>
+            ))}
+            <p className="text-xs font-bold text-slate-600">
+              Total de la OT: {total} {tipoCantidad}. Se corrige en Amasado y en
+              las etapas siguientes.
+            </p>
+          </div>
+        )}
+      </div>
+    );
   };
 
   if (!session) {
@@ -1539,7 +1747,7 @@ export default function App() {
                         </p>
                       </div>
 
-                      {datosOt ? (
+                      {datosOt && !dobleCorr ? (
                         <div>
                           <label className={ESTILO_LABEL}>
                             {esUnitario ? 'Unidades producidas' : 'Latas producidas'}
@@ -1561,6 +1769,9 @@ export default function App() {
                         </div>
                       ) : null}
 
+                      {bloqueDobleCarro()}
+
+                      {!dobleCorr && (
                       <div>
                         <label className={ESTILO_LABEL}>N° de carro</label>
                         <input
@@ -1582,6 +1793,7 @@ export default function App() {
                             : ''}
                         </p>
                       </div>
+                      )}
 
                       <div>
                         <label className={ESTILO_LABEL}>Resultado</label>
@@ -1957,6 +2169,7 @@ export default function App() {
 
                   {session.etapa === 'Control de calidad' && (
                     <>
+                    {infoVigente && !infoVigente.cargando && bloqueDobleCarro()}
                     <label
                       className={`flex items-center gap-3 p-4 rounded-2xl border cursor-pointer transition-all ${
                         rechazoParcial

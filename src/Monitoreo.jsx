@@ -44,6 +44,13 @@ const textoCarrosCsv = (ot) =>
     )
     .join(' | ');
 
+// Números de carro de un registro: "38-17" y el detalle por carro, como números
+const carrosDe = (ot) => {
+  const nums = String(ot.batches || '').split('-');
+  (ot.carros || []).forEach((c) => nums.push(String(c.carro ?? c.numero ?? '')));
+  return nums.filter((n) => /^\d+$/.test(n)).map(Number);
+};
+
 const POR_PAGINA = 45;
 
 const COLOR_LIBERACION = {
@@ -114,6 +121,8 @@ export default function Monitoreo() {
   const [plan, setPlan] = useState([]);
 
   const [searchTerm, setSearchTerm] = useState('');
+  // N° de carro exacto (03 y 3 son el mismo carro)
+  const [filtroCarro, setFiltroCarro] = useState('');
   const [filtroEtapa, setFiltroEtapa] = useState('Todas');
   const [filtroPan, setFiltroPan] = useState('');
   const [pagina, setPagina] = useState(1);
@@ -243,13 +252,15 @@ export default function Monitoreo() {
         String(ot.otNumber || '').toLowerCase().includes(t) ||
         String(ot.operario || '').toLowerCase().includes(t) ||
         String(ot.ofPT || '').toLowerCase().includes(t);
+      const coincideCarro =
+        !filtroCarro || carrosDe(ot).includes(Number(filtroCarro));
       const coincideEtapa = filtroEtapa === 'Todas' || ot.etapa === filtroEtapa;
       const coincidePan =
         !filtroPan ||
         (ot.categoria === cat && (!varie || ot.variedad === varie));
-      return coincideTexto && coincideEtapa && coincidePan;
+      return coincideTexto && coincideCarro && coincideEtapa && coincidePan;
     });
-  }, [enRango, searchTerm, filtroEtapa, filtroPan]);
+  }, [enRango, searchTerm, filtroCarro, filtroEtapa, filtroPan]);
 
   const totalPaginas = Math.max(1, Math.ceil(filtrados.length / POR_PAGINA));
   const paginaActual = Math.min(pagina, totalPaginas);
@@ -260,7 +271,7 @@ export default function Monitoreo() {
 
   useEffect(() => {
     setPagina(1);
-  }, [searchTerm, filtroEtapa, filtroPan, desde, hasta, todo]);
+  }, [searchTerm, filtroCarro, filtroEtapa, filtroPan, desde, hasta, todo]);
 
   const elegirPreset = (p) => {
     setPreset(p);
@@ -512,6 +523,19 @@ export default function Monitoreo() {
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 w-full sm:w-60 font-medium transition-all"
+              />
+            </div>
+
+            <div className="relative">
+              <Search className="w-4 h-4 absolute left-3.5 top-3.5 text-slate-400" />
+              <input
+                type="text"
+                inputMode="numeric"
+                placeholder="Buscar N° de carro..."
+                aria-label="Buscar por número de carro"
+                value={filtroCarro}
+                onChange={(e) => setFiltroCarro(e.target.value.replace(/\D/g, ''))}
+                className="pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 w-full sm:w-44 font-medium transition-all"
               />
             </div>
 
