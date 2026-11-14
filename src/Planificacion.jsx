@@ -209,11 +209,9 @@ export function PlanificacionBodega({ session, registros, onRegistrar }) {
   const [grupoAbierto, setGrupoAbierto] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
   // Registro en Bodega directo desde la checklist (sin pasar al formulario)
-  const [carroBodega, setCarroBodega] = useState('');
   const [guardando, setGuardando] = useState(false);
   const { ots, loading } = usePlanificacion(fecha);
   useEffect(() => {
-    setCarroBodega('');
     setErrorMsg('');
   }, [seleccionId]);
 
@@ -248,12 +246,8 @@ export function PlanificacionBodega({ session, registros, onRegistrar }) {
     }
   };
 
+  // Bodega no registra N° de carro: ese dato lo ingresa Amasado
   const registrarBodega = async (ot) => {
-    const carro = carroBodega.trim();
-    if (!/^\d+(-\d+)*$/.test(carro)) {
-      setErrorMsg('Ingresa el N° de carro (ej. 3, o 03-02 si son varios)');
-      return;
-    }
     setGuardando(true);
     setErrorMsg('');
     try {
@@ -273,7 +267,7 @@ export function PlanificacionBodega({ session, registros, onRegistrar }) {
           categoriaValida && CATALOGO_PAN[ot.categoria].includes(ot.variedad)
             ? ot.variedad
             : 'No especificada',
-        batches: carro,
+        batches: '',
         etapa: 'Bodega',
         operario: session.user,
         photoURL: null,
@@ -284,7 +278,6 @@ export function PlanificacionBodega({ session, registros, onRegistrar }) {
           minute: '2-digit',
         }),
       });
-      setCarroBodega('');
     } catch (err) {
       console.error(err);
       setErrorMsg('No se pudo registrar. Revisa tu conexión a internet.');
@@ -409,23 +402,6 @@ export function PlanificacionBodega({ session, registros, onRegistrar }) {
           </p>
         ) : (
           <div className="mt-6 space-y-3">
-            {completa && (
-              <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
-                  N° de carro
-                </label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  value={carroBodega}
-                  onChange={(e) =>
-                    setCarroBodega(e.target.value.replace(/[^\d-]/g, ''))
-                  }
-                  placeholder="Ej. 3"
-                  className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500 transition-all"
-                />
-              </div>
-            )}
             <button
               type="button"
               disabled={!completa || guardando}

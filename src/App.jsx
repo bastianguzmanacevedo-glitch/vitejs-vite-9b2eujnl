@@ -237,6 +237,8 @@ export default function App() {
   const [cantidadCorregida, setCantidadCorregida] = useState('');
   const [resultadoCalidad, setResultadoCalidad] = useState('aprobada');
   const [unidadesRechazadas, setUnidadesRechazadas] = useState('');
+  // Calidad en horno: N° de carro (lo puede corregir si Amasado lo ingresó mal)
+  const [carroHorno, setCarroHorno] = useState('');
   const [mermas, setMermas] = useState('');
   // Lo que ya se sabe de la OT ingresada (registros y planificación)
   const [infoOt, setInfoOt] = useState(null);
@@ -399,6 +401,7 @@ export default function App() {
     );
     setResultadoCalidad(horneado?.resultadoCalidad || 'aprobada');
     setUnidadesRechazadas(String(horneado?.unidadesRechazadas ?? ''));
+    setCarroHorno(String(horneado?.batches || amasado?.batches || ''));
   }, [infoOt, esCalidadHorno]);
 
   // Packing: prepara los carros con lo registrado en Amasado o, si el Packing
@@ -542,6 +545,7 @@ export default function App() {
     setCantidadCorregida('');
     setResultadoCalidad('aprobada');
     setUnidadesRechazadas('');
+    setCarroHorno('');
     setInfoOt(null);
   };
 
@@ -554,7 +558,7 @@ export default function App() {
     if (esControlSap && !ofPT.trim()) {
       return setErrorMsg('Ingresa el N° de OF PT');
     }
-    if (pideCarro && !FORMATO_CARRO.test(carro)) {
+    if (etapa === 'Amasado' && !FORMATO_CARRO.test(carro)) {
       return setErrorMsg('El N° de carro debe ser un número o carros separados por guion, ej. 03-02');
     }
     if (pideCarro && infoVigente?.cargando) {
@@ -608,6 +612,16 @@ export default function App() {
       if (resultadoCalidad === 'parcial' && !(Number(unidadesRechazadas) > 0)) {
         return setErrorMsg('Ingresa cuántas unidades se rechazaron');
       }
+      const carroH = carroHorno.trim();
+      if (carroH && !FORMATO_CARRO.test(carroH)) {
+        return setErrorMsg('El N° de carro debe ser un número o carros separados por guion, ej. 38-17');
+      }
+      const nCarros = regAmasado?.carros?.length || 0;
+      if (carroH && nCarros > 1 && carroH.split('-').length !== nCarros) {
+        return setErrorMsg(
+          `Esta OT salió en ${nCarros} carros: escribe los ${nCarros} números separados por guion (ej. 38-17)`
+        );
+      }
     }
 
     setUploading(true);
@@ -650,6 +664,32 @@ export default function App() {
           revisadoFecha: fechaStr,
           revisadoHora: horaStr,
         };
+
+        // Carro corregido en horno: se corrige también en los registros de la
+        // OT que tenían el carro anterior (Amasado y siguientes), porque las
+        // etapas siguientes copian el carro de Amasado.
+        const carroAnterior = String(
+          previoHorneado?.batches || previoAmasado?.batches || ''
+        );
+        const carroNuevo = carroHorno.trim();
+        if (carroNuevo && carroNuevo !== carroAnterior) {
+          datosCalidad.batches = carroNuevo;
+          datosCalidad.carroAnterior = carroAnterior;
+          const partes = carroNuevo.split('-');
+          for (const d of datosPrevios) {
+            if (d.etapa === 'Horneado' || d.etapa === 'Bodega') continue;
+            if (String(d.batches || '') !== carroAnterior) continue;
+            const cambios = { batches: carroNuevo, carroAnterior };
+            if (d.carros?.length === partes.length && d.carros.length > 1) {
+              cambios.carros = d.carros.map((c, i) =>
+                d.etapa === 'Packing'
+                  ? { ...c, numero: partes[i] }
+                  : { ...c, carro: partes[i] }
+              );
+            }
+            await updateDoc(doc(db, COL_OTS, d.id), cambios);
+          }
+        }
       }
 
       // Si el horno ya registró la OT, control de calidad completa ese registro
@@ -733,7 +773,8 @@ export default function App() {
       // Amasado (o del último registro, o de la planificación).
       let categoria = categoriaSel || 'No especificada';
       let variedad = variedadSel || 'No especificada';
-      let batches = carro;
+      // Bodega no registra carro: lo ingresa Amasado
+      let batches = etapa === 'Bodega' ? '' : carro;
       let tipoOrigen = tipoCantidad;
       if (usaDatosAmasado) {
         const origen =
@@ -1340,6 +1381,8 @@ export default function App() {
                           session.etapa === 'Amasado' ? 'grid grid-cols-2 gap-4' : ''
                         }
                       >
+                        {/* Solo Amasado ingresa el N° de carro; Bodega no */}
+                        {session.etapa === 'Amasado' && (
                         <div>
                           <label className={ESTILO_LABEL}>
                             {dobleCarro ? 'Carro 1: N° de carro' : 'Número de carro'}
@@ -1363,6 +1406,7 @@ export default function App() {
                             className={ESTILO_INPUT}
                           />
                         </div>
+                        )}
                         {session.etapa === 'Amasado' && (
                           <div>
                             <label className={ESTILO_LABEL}>
@@ -1516,6 +1560,28 @@ export default function App() {
                           </p>
                         </div>
                       ) : null}
+
+                      <div>
+                        <label className={ESTILO_LABEL}>N° de carro</label>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={carroHorno}
+                          onChange={(e) =>
+                            setCarroHorno(e.target.value.replace(/[^\d-]/g, ''))
+                          }
+                          placeholder="Ej. 3"
+                          className={ESTILO_INPUT}
+                        />
+                        <p className="text-[11px] text-slate-500 mt-1">
+                          {regAmasado?.batches
+                            ? `En Amasado se registró el carro ${regAmasado.batches}. Corrígelo si está mal ingresado.`
+                            : 'Corrígelo si está mal ingresado.'}
+                          {regAmasado?.carros?.length > 1
+                            ? ` Son ${regAmasado.carros.length} carros: sepáralos con guion (ej. 38-17).`
+                            : ''}
+                        </p>
+                      </div>
 
                       <div>
                         <label className={ESTILO_LABEL}>Resultado</label>
