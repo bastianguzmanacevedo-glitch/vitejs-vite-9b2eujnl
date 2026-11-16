@@ -32,6 +32,24 @@ export const guardarRecordado = (datos) => {
     // Sin almacenamiento disponible: no se puede recordar en este teléfono.
   }
 };
+// Al ingresar, la app recuerda nombre y puesto sola, salvo que en este
+// teléfono se haya desactivado "Recordar mi nombre y puesto" en Ajustes.
+const CLAVE_NO_RECORDAR = 'espigal_no_recordar';
+export const recordarDesactivado = () => {
+  try {
+    return localStorage.getItem(CLAVE_NO_RECORDAR) === '1';
+  } catch {
+    return false;
+  }
+};
+const marcarNoRecordar = (desactivado) => {
+  try {
+    if (desactivado) localStorage.setItem(CLAVE_NO_RECORDAR, '1');
+    else localStorage.removeItem(CLAVE_NO_RECORDAR);
+  } catch {
+    // Sin almacenamiento disponible
+  }
+};
 
 const LIMITE_BYTES = 5 * 1024 ** 3; // 5 GB gratuitos de Firebase Storage
 const LIMITE_TEXTO = 1024 ** 3; // 1 GB gratuito de Firestore (texto)
@@ -246,6 +264,7 @@ export default function Ajustes({ session, onCerrar, oscuro, setOscuro }) {
   });
   const cambiarRecordar = (activo) => {
     setRecordar(activo);
+    marcarNoRecordar(!activo);
     guardarRecordado(
       activo ? { nombre: session.user, etapa: session.etapa } : null
     );

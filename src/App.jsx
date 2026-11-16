@@ -43,7 +43,16 @@ import {
 import { AdminLotes, PlanificacionBodega } from './Planificacion';
 import Monitoreo from './Monitoreo';
 import Inventario from './Inventario';
-import Ajustes, { leerRecordado, guardarRecordado } from './Ajustes';
+import Ajustes, {
+  leerRecordado,
+  guardarRecordado,
+  recordarDesactivado,
+} from './Ajustes';
+import Tutorial, {
+  CLAVE_CALIDAD_HORNO,
+  marcarTutorialVisto,
+  tutorialPendiente,
+} from './Tutorial';
 import {
   CATALOGO_PAN,
   CATEGORIAS_EN_LATAS,
@@ -124,7 +133,7 @@ const ESTILO_LABEL =
   'block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5';
 
 // Datos que la OT trae de Amasado (y de Horneado), para no volver a escribirlos
-const TarjetaOt = ({ info, amasado, horneado, packing, origen }) => {
+const TarjetaOt = ({ info, amasado, horneado, packing, origen, resumenCalidad }) => {
   if (!info) {
     return (
       <p className="text-xs text-slate-400 font-medium -mt-2">
@@ -172,7 +181,7 @@ const TarjetaOt = ({ info, amasado, horneado, packing, origen }) => {
       `${horneado.cantidadCorregida} ${tipo}`,
     ]);
   }
-  if (packing?.mermas != null) {
+  if (packing?.mermas != null && !resumenCalidad) {
     filas.push(['Mermas en Packing', `${packing.mermas} ${tipo}`]);
   }
   if (horneado?.resultadoCalidad) {
@@ -181,6 +190,42 @@ const TarjetaOt = ({ info, amasado, horneado, packing, origen }) => {
       horneado.resultadoCalidad === 'parcial'
         ? `${horneado.unidadesRechazadas} ${tipo} rechazadas`
         : RESULTADOS_CALIDAD[horneado.resultadoCalidad],
+    ]);
+  }
+  // Control de calidad (etapa 5): resumen de lo liberado y lo mermado
+  if (resumenCalidad) {
+    const resultado = horneado?.resultadoCalidad;
+    const producidas = horneado?.cantidadCorregida ?? amasado?.cantidadProducida;
+    const rechazadasHorno =
+      resultado === 'parcial'
+        ? horneado.unidadesRechazadas || 0
+        : resultado === 'rechazada'
+        ? producidas ?? 0
+        : 0;
+    const mermasPacking = packing?.mermas ?? 0;
+    let liberadas;
+    if (!resultado) liberadas = 'Sin liberación en horno';
+    else if (producidas == null) liberadas = '—';
+    else {
+      liberadas = `${Math.max(producidas - rechazadasHorno, 0)} ${tipo}`;
+      if (resultado === 'seleccion') liberadas += ' (para selección)';
+    }
+    const totalMermas = rechazadasHorno + mermasPacking;
+    const detalleMermas =
+      rechazadasHorno && mermasPacking
+        ? ` (horno ${rechazadasHorno} + packing ${mermasPacking})`
+        : rechazadasHorno
+        ? ' (horno)'
+        : mermasPacking
+        ? ' (packing)'
+        : '';
+    filas.push([
+      tipo === 'latas' ? 'Latas liberadas' : 'Unidades liberadas',
+      liberadas,
+    ]);
+    filas.push([
+      tipo === 'latas' ? 'Latas mermadas' : 'Unidades mermadas',
+      `${totalMermas} ${tipo}${detalleMermas}`,
     ]);
   }
   return (
@@ -278,6 +323,20 @@ export default function App() {
 
   // Ajustes y modo oscuro (por dispositivo)
   const [showAjustes, setShowAjustes] = useState(false);
+  // Tutorial de la etapa (solo la primera vez que la persona entra a ella)
+  const [tutorial, setTutorial] = useState(null);
+  useEffect(() => {
+    setTutorial(null);
+    if (session?.role !== 'operario') return;
+    const clave = session.calidad ? CLAVE_CALIDAD_HORNO : session.etapa;
+    let vigente = true;
+    tutorialPendiente(session.user, clave).then((pendiente) => {
+      if (vigente && pendiente) setTutorial(clave);
+    });
+    return () => {
+      vigente = false;
+    };
+  }, [session]);
   const [oscuro, setOscuro] = useState(() =>
     document.documentElement.classList.contains('oscuro')
   );
@@ -309,6 +368,9 @@ export default function App() {
   // El Packing de la OT ya está completo: se le puede agregar otro carro
   const agregarPacking =
     etapaActual === 'Packing' && !!regPacking && !completarPacking;
+  // OT "Para selección" en el horno: Packing debe anotar al menos 1 merma
+  const mermasObligatorias =
+    etapaActual === 'Packing' && regHorneado?.resultadoCalidad === 'seleccion';
   // El Packing guardado no tiene detalle por carro (se registró con un carro)
   const convertirPacking = agregarPacking && !(regPacking.carros?.length > 0);
   const datosOt =
@@ -738,6 +800,19 @@ export default function App() {
       if (errorNuevo) return setErrorMsg(errorNuevo);
       if (!carroPkLleno(nuevoPk)) {
         return setErrorMsg('Ingresa la cantidad y las cajas del carro que vas a agregar');
+      }
+    }
+    if (mermasObligatorias && !(agregarPacking && !agregaPk)) {
+      // Cuentan las mermas ya guardadas en el registro de Packing de la OT
+      const yaGuardadas = regPacking?.mermas || 0;
+      const nuevas = mermas === '' ? 0 : Number(mermas);
+      if (
+        (mermas !== '' && !ES_ENTERO.test(mermas.trim())) ||
+        yaGuardadas + nuevas < 1
+      ) {
+        return setErrorMsg(
+          'Esta OT quedó "Para selección" en el horno: ingresa las mermas (1 o más).'
+        );
       }
     }
     const usaCarrosPk =
@@ -1377,7 +1452,9 @@ export default function App() {
                   setLoginError('');
                   setPinEtapa('');
                   // Si el teléfono recuerda al operario, guarda su último puesto
-                  if (leerRecordado()) {
+                  // La app recuerda nombre y puesto sola (salvo que se haya
+                  // desactivado en Ajustes en este teléfono)
+                  if (!recordarDesactivado()) {
                     guardarRecordado({ nombre: name, etapa: etapaLogin });
                   }
                   setSession({
@@ -1598,6 +1675,10 @@ export default function App() {
             <button
               onClick={() => {
                 setSession(null);
+                // Al salir, el siguiente operario parte con el formulario vacío
+                limpiarFormulario();
+                setErrorMsg('');
+                setSuccessMsg('');
                 const r = leerRecordado();
                 setNombreLogin(r?.nombre || '');
                 if (r?.etapa) setEtapaLogin(r.etapa);
@@ -1610,6 +1691,17 @@ export default function App() {
           </div>
         </div>
       </header>
+
+      {tutorial && session?.role === 'operario' && (
+        <Tutorial
+          clave={tutorial}
+          nombre={session.user}
+          onTerminar={() => {
+            marcarTutorialVisto(session.user, tutorial);
+            setTutorial(null);
+          }}
+        />
+      )}
 
       {showAjustes && (
         <Ajustes
@@ -1713,6 +1805,7 @@ export default function App() {
                       amasado={regAmasado}
                       horneado={regHorneado}
                       packing={etapaActual === 'Packing' ? null : regPacking}
+                      resumenCalidad={etapaActual === 'Control de calidad'}
                       origen={datosOt}
                     />
                   )}
@@ -2068,11 +2161,11 @@ export default function App() {
 
                   {session.etapa === 'Packing' && (
                     <>
-                      {regHorneado?.resultadoCalidad === 'seleccion' && (
+                      {mermasObligatorias && (
                         <div className="p-4 bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-2xl flex items-center gap-3">
                           <AlertTriangle className="w-5 h-5 shrink-0 text-amber-600" />
-                          Control de calidad dejó esta OT para selección:
-                          anota las mermas.
+                          Control de calidad dejó esta OT para selección: las
+                          mermas son obligatorias (1 o más).
                         </div>
                       )}
                       {agregarPacking ? (
@@ -2243,7 +2336,7 @@ export default function App() {
                               </div>
                               <div>
                                 <label className={ESTILO_LABEL}>
-                                  Mermas de este carro (opcional)
+                                  {mermasObligatorias ? 'Mermas de este carro (obligatorio)' : 'Mermas de este carro (opcional)'}
                                 </label>
                                 <input
                                   type="number"
@@ -2336,7 +2429,7 @@ export default function App() {
                           })}
                         <div>
                           <label className={ESTILO_LABEL}>
-                            Mermas (opcional)
+                            {mermasObligatorias ? 'Mermas (obligatorio)' : 'Mermas (opcional)'}
                           </label>
                           <input
                             type="number"
@@ -2511,7 +2604,7 @@ export default function App() {
                               </p>
                         <div>
                           <label className={ESTILO_LABEL}>
-                            Mermas (opcional)
+                            {mermasObligatorias ? 'Mermas (obligatorio)' : 'Mermas (opcional)'}
                           </label>
                           <input
                             type="number"
@@ -2544,7 +2637,7 @@ export default function App() {
                               </div>
                         <div>
                           <label className={ESTILO_LABEL}>
-                            Mermas (opcional)
+                            {mermasObligatorias ? 'Mermas (obligatorio)' : 'Mermas (opcional)'}
                           </label>
                           <input
                             type="number"

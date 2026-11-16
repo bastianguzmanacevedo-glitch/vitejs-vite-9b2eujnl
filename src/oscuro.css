@@ -72,6 +72,17 @@ html.oscuro .text-violet-700 { color: #c4b5fd; }
 html.oscuro .text-sky-700 { color: #7dd3fc; }
 html.oscuro .stroke-slate-100 { color: #334155; }
 
+/* Recuadros con fondo de color translúcido (calidad en horno, Packing) */
+html.oscuro .bg-violet-50\/60 { background-color: rgba(139, 92, 246, 0.1); }
+html.oscuro .bg-emerald-50\/60 { background-color: rgba(16, 185, 129, 0.1); }
+html.oscuro .bg-amber-50\/70 { background-color: rgba(245, 158, 11, 0.1); }
+html.oscuro .border-violet-200 { border-color: rgba(139, 92, 246, 0.4); }
+html.oscuro .border-amber-300 { border-color: rgba(245, 158, 11, 0.45); }
+html.oscuro .border-emerald-300 { border-color: rgba(16, 185, 129, 0.45); }
+html.oscuro .text-violet-900 { color: #c4b5fd; }
+html.oscuro .text-red-600 { color: #fca5a5; }
+html.oscuro .hover\:bg-slate-200:hover { background-color: #475569; }
+
 /* Controles nativos */
 html.oscuro input,
 html.oscuro select,

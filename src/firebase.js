@@ -27,3 +27,5 @@ export const COL_OTS = `${PREFIJO}ordenes_trabajo`;
 export const COL_PLANIFICACION = `${PREFIJO}planificacion_ots`;
 export const CARPETA_FOTOS = `${PREFIJO}ots`;
 export const COL_INVENTARIO = `${PREFIJO}inventario`;
+// Tutoriales ya vistos por cada operario (por etapa)
+export const COL_OPERARIOS = `${PREFIJO}operarios`;
