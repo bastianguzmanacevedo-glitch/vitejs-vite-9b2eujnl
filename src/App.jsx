@@ -82,19 +82,21 @@ const ES_ENTERO = /^\d+$/;
 const carroPkVacio = (numero = '') => ({ numero, cantidad: '', cajas: '' });
 const carroPkLleno = (c) =>
   String(c.cantidad).trim() !== '' && String(c.cajas).trim() !== '';
-// Un carro se completa entero (cantidad y cajas) o se deja en blanco para después
+// Un carro se completa entero (cantidad y cajas) o se deja en blanco para después.
+// La cantidad viene de Amasado (c.fija); solo se escribe si Amasado no la tiene.
+// Cajas puede ser 0: carro mermado entero.
 const errorCarroPk = (c, i) => {
   const nombre = c.numero ? `carro ${c.numero}` : `carro ${i + 1}`;
   const cantidad = String(c.cantidad).trim();
   const cajas = String(c.cajas).trim();
-  if (cantidad === '' && cajas === '') return '';
+  if (cajas === '' && (cantidad === '' || c.fija)) return '';
   if (cantidad === '') return `Ingresa la cantidad del ${nombre}`;
   if (cajas === '') return `Ingresa las cajas del ${nombre}`;
-  if (!ES_ENTERO.test(cantidad) || Number(cantidad) <= 0) {
+  if (!c.fija && (!ES_ENTERO.test(cantidad) || Number(cantidad) <= 0)) {
     return `La cantidad del ${nombre} debe ser un número entero mayor que 0`;
   }
-  if (!ES_ENTERO.test(cajas) || Number(cajas) <= 0) {
-    return `Las cajas del ${nombre} deben ser un número entero mayor que 0`;
+  if (!ES_ENTERO.test(cajas)) {
+    return `Las cajas del ${nombre} deben ser un número entero (0 si se mermó el carro entero)`;
   }
   return '';
 };
@@ -373,6 +375,28 @@ export default function App() {
     etapaActual === 'Packing' && regHorneado?.resultadoCalidad === 'seleccion';
   // El Packing guardado no tiene detalle por carro (se registró con un carro)
   const convertirPacking = agregarPacking && !(regPacking.carros?.length > 0);
+  // Packing no cuenta latas ni unidades: las de cada carro vienen de Amasado
+  // (corregidas por calidad en horno, si las corrigió). null si no se saben.
+  const cantidadDeCarro = (numero) => {
+    const n = String(numero ?? '').trim();
+    if (!n || !regAmasado) return null;
+    if (regAmasado.carros?.length) {
+      const c = regAmasado.carros.find((x) => Number(x.carro) === Number(n));
+      return c?.cantidad ?? null;
+    }
+    const nums = String(regAmasado.batches || '').split('-').filter(Boolean);
+    if (nums.length === 1 && Number(nums[0]) === Number(n)) {
+      return regHorneado?.cantidadCorregida ?? regAmasado.cantidadProducida ?? null;
+    }
+    return null;
+  };
+  const conCantidad = (c) => {
+    const fija = cantidadDeCarro(c.numero);
+    return fija == null ? c : { ...c, cantidad: String(fija), fija: true };
+  };
+  const carrosPkEf = carrosPk.map(conCantidad);
+  const nuevoPkEf = conCantidad(nuevoPk);
+  const cantidadCarro1Pk = cantidadDeCarro(carro1Pk.numero) ?? carro1Pk.cantidad;
   const datosOt =
     regAmasado ||
     infoVigente?.registros.find(
@@ -648,6 +672,38 @@ export default function App() {
       lista.map((c, j) => (j === i ? { ...c, [campo]: valor } : c))
     );
 
+  // Latas o unidades de un carro en Packing: fijas si vienen de Amasado; solo
+  // se escriben si Amasado no registró ese carro
+  const campoCantidadPk = (numero, valor, onChange) => {
+    const fija = cantidadDeCarro(numero);
+    return (
+      <div>
+        <label className={ESTILO_LABEL}>
+          {tipoPk === 'latas' ? 'Latas' : 'Unidades'}
+        </label>
+        {fija != null ? (
+          <p
+            className="px-4 py-3 rounded-xl border border-slate-200 bg-slate-100 text-sm font-black text-slate-700"
+            title="Viene de Amasado"
+          >
+            {fija}
+          </p>
+        ) : (
+          <input
+            type="number"
+            min="1"
+            step="1"
+            inputMode="numeric"
+            value={valor}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder={String(numero ?? '').trim() ? 'Sin dato' : ''}
+            className={ESTILO_INPUT}
+          />
+        )}
+      </div>
+    );
+  };
+
   const limpiarFormulario = () => {
     setNumOt('');
     setFotoBase64(null);
@@ -785,8 +841,8 @@ export default function App() {
           return setErrorMsg('Ingresa el N° del carro ya empacado');
         }
         if (
-          !ES_ENTERO.test(String(carro1Pk.cantidad).trim()) ||
-          Number(carro1Pk.cantidad) <= 0
+          !ES_ENTERO.test(String(cantidadCarro1Pk).trim()) ||
+          Number(cantidadCarro1Pk) <= 0
         ) {
           return setErrorMsg(
             `Ingresa ${tipoPk === 'latas' ? 'las latas' : 'las unidades'} del carro ya empacado`
@@ -796,10 +852,14 @@ export default function App() {
       if (!ES_ENTERO.test(String(nuevoPk.numero).trim())) {
         return setErrorMsg('Ingresa el N° del carro que vas a agregar');
       }
-      const errorNuevo = errorCarroPk(nuevoPk, 1);
+      const errorNuevo = errorCarroPk(nuevoPkEf, 1);
       if (errorNuevo) return setErrorMsg(errorNuevo);
-      if (!carroPkLleno(nuevoPk)) {
-        return setErrorMsg('Ingresa la cantidad y las cajas del carro que vas a agregar');
+      if (!carroPkLleno(nuevoPkEf)) {
+        return setErrorMsg(
+          nuevoPkEf.fija
+            ? 'Ingresa las cajas del carro que vas a agregar (0 si se mermó entero)'
+            : 'Ingresa la cantidad y las cajas del carro que vas a agregar'
+        );
       }
     }
     if (mermasObligatorias && !(agregarPacking && !agregaPk)) {
@@ -818,19 +878,19 @@ export default function App() {
     const usaCarrosPk =
       etapa === 'Packing' && !agregarPacking && (dobleCarro || completarPacking);
     if (usaCarrosPk) {
-      for (const [i, c] of carrosPk.entries()) {
+      for (const [i, c] of carrosPkEf.entries()) {
         if (!ES_ENTERO.test(String(c.numero).trim())) {
           return setErrorMsg(`Ingresa el N° del carro ${i + 1}`);
         }
         const error = errorCarroPk(c, i);
         if (error) return setErrorMsg(error);
       }
-      const numeros = carrosPk.map((c) => String(c.numero).trim());
+      const numeros = carrosPkEf.map((c) => Number(String(c.numero).trim()));
       if (new Set(numeros).size !== numeros.length) {
         return setErrorMsg('Hay dos carros con el mismo número');
       }
-      if (!completarPacking && !carrosPk.some(carroPkLleno)) {
-        return setErrorMsg('Completa la cantidad y las cajas de al menos un carro');
+      if (!completarPacking && !carrosPkEf.some(carroPkLleno)) {
+        return setErrorMsg('Completa las cajas de al menos un carro');
       }
     }
     if (
@@ -1056,7 +1116,7 @@ export default function App() {
           agregados.length = 0;
           carros = (pk.carros || []).map((c) => {
             if (carroCompleto(c)) return c;
-            const f = carrosPk.find((x) => String(x.numero) === String(c.numero));
+            const f = carrosPkEf.find((x) => String(x.numero) === String(c.numero));
             if (!f || !carroPkLleno(f)) return c;
             agregados.push(c.numero);
             return {
@@ -1118,7 +1178,7 @@ export default function App() {
             : [
                 {
                   numero: carro1Pk.numero.trim(),
-                  cantidad: Number(carro1Pk.cantidad),
+                  cantidad: Number(cantidadCarro1Pk),
                   tipoCantidad: tipo,
                   cajas: pk.cajas ?? 0,
                   operario: pk.operario || '',
@@ -1135,9 +1195,9 @@ export default function App() {
           }
           carros.push({
             numero,
-            cantidad: Number(nuevoPk.cantidad),
+            cantidad: Number(nuevoPkEf.cantidad),
             tipoCantidad: tipo,
-            cajas: Number(nuevoPk.cajas),
+            cajas: Number(nuevoPkEf.cajas),
             operario: session.user,
             fechaStr,
             horaStr,
@@ -1238,7 +1298,7 @@ export default function App() {
       if (etapa === 'Packing') {
         if (dobleCarro) {
           // Un carro en blanco queda pendiente y se completa después
-          const carros = carrosPk.map((c) => {
+          const carros = carrosPkEf.map((c) => {
             const lleno = carroPkLleno(c);
             return {
               numero: String(c.numero).trim(),
@@ -2245,28 +2305,12 @@ export default function App() {
                                         className={ESTILO_INPUT}
                                       />
                                     </div>
-                                    <div>
-                                      <label className={ESTILO_LABEL}>
-                                        {tipoPk === 'latas' ? 'Latas' : 'Unidades'}
-                                      </label>
-                                      <input
-                                        type="number"
-                                        min="1"
-                                        step="1"
-                                        inputMode="numeric"
-                                        value={carro1Pk.cantidad}
-                                        onChange={(e) =>
-                                          setCarro1Pk((c) => ({
-                                            ...c,
-                                            cantidad: e.target.value,
-                                          }))
-                                        }
-                                        className={ESTILO_INPUT}
-                                      />
-                                    </div>
+                                    {campoCantidadPk(carro1Pk.numero, carro1Pk.cantidad, (v) =>
+                                      setCarro1Pk((c) => ({ ...c, cantidad: v }))
+                                    )}
                                   </div>
                                   <p className="text-[11px] text-slate-500">
-                                    Viene de Amasado: corrígelo si no coincide.
+                                    El N° de carro viene de Amasado: corrígelo si no coincide.
                                   </p>
                                 </div>
                               )}
@@ -2292,30 +2336,14 @@ export default function App() {
                                       className={ESTILO_INPUT}
                                     />
                                   </div>
-                                  <div>
-                                    <label className={ESTILO_LABEL}>
-                                      {tipoPk === 'latas' ? 'Latas' : 'Unidades'}
-                                    </label>
-                                    <input
-                                      type="number"
-                                      min="1"
-                                      step="1"
-                                      inputMode="numeric"
-                                      value={nuevoPk.cantidad}
-                                      onChange={(e) =>
-                                        setNuevoPk((c) => ({
-                                          ...c,
-                                          cantidad: e.target.value,
-                                        }))
-                                      }
-                                      className={ESTILO_INPUT}
-                                    />
-                                  </div>
+                                  {campoCantidadPk(nuevoPk.numero, nuevoPk.cantidad, (v) =>
+                                    setNuevoPk((c) => ({ ...c, cantidad: v }))
+                                  )}
                                   <div>
                                     <label className={ESTILO_LABEL}>Cajas</label>
                                     <input
                                       type="number"
-                                      min="1"
+                                      min="0"
                                       step="1"
                                       inputMode="numeric"
                                       value={nuevoPk.cajas}
@@ -2330,8 +2358,9 @@ export default function App() {
                                   </div>
                                 </div>
                                 <p className="text-[11px] text-slate-500">
-                                  Se cuenta en {tipoPk}, igual que el carro ya
-                                  registrado.
+                                  {nuevoPkEf.fija
+                                    ? `Las ${tipoPk} vienen de Amasado. Si el carro se mermó entero, anota 0 cajas.`
+                                    : `Amasado no tiene este carro: ingresa sus ${tipoPk}. Si se mermó entero, anota 0 cajas.`}
                                 </p>
                               </div>
                               <div>
@@ -2358,9 +2387,9 @@ export default function App() {
                               Packing con carro pendiente
                             </p>
                             <p className="text-xs text-slate-600">
-                              Esta OT ya se registró en Packing. Completa el
-                              carro que falta: queda en el mismo registro.
-                              Se cuenta en {tipoPk}.
+                              Esta OT ya se registró en Packing. Completa las
+                              cajas del carro que falta (0 si se mermó entero):
+                              queda en el mismo registro.
                             </p>
                           </div>
                           {carrosPk.map((c, i) => {
@@ -2394,27 +2423,14 @@ export default function App() {
                                 <p className="col-span-2 text-xs font-black text-amber-900">
                                   Carro {c.numero} (pendiente)
                                 </p>
-                                <div>
-                                  <label className={ESTILO_LABEL}>
-                                    {tipoPk === 'latas' ? 'Latas' : 'Unidades'}
-                                  </label>
-                                  <input
-                                    type="number"
-                                    min="1"
-                                    step="1"
-                                    inputMode="numeric"
-                                    value={c.cantidad}
-                                    onChange={(e) =>
-                                      cambiarCarroPk(i, 'cantidad', e.target.value)
-                                    }
-                                    className={ESTILO_INPUT}
-                                  />
-                                </div>
+                                {campoCantidadPk(c.numero, c.cantidad, (v) =>
+                                  cambiarCarroPk(i, 'cantidad', v)
+                                )}
                                 <div>
                                   <label className={ESTILO_LABEL}>Cajas</label>
                                   <input
                                     type="number"
-                                    min="1"
+                                    min="0"
                                     step="1"
                                     inputMode="numeric"
                                     value={c.cajas}
@@ -2474,32 +2490,13 @@ export default function App() {
 
                           {dobleCarro ? (
                             <div className="space-y-4">
-                              <div>
-                                <label className={ESTILO_LABEL}>Se cuenta en</label>
-                                <div className="grid grid-cols-2 gap-2">
-                                  {[
-                                    ['unidades', 'Unidades'],
-                                    ['latas', 'Latas'],
-                                  ].map(([id, texto]) => (
-                                    <button
-                                      key={id}
-                                      type="button"
-                                      onClick={() => setTipoPk(id)}
-                                      aria-pressed={tipoPk === id}
-                                      className={`py-2.5 rounded-xl text-xs font-bold border transition-all ${
-                                        tipoPk === id
-                                          ? 'bg-amber-600 text-white border-amber-600'
-                                          : 'bg-white text-slate-600 border-slate-200'
-                                      }`}
-                                    >
-                                      {texto}
-                                    </button>
-                                  ))}
-                                </div>
-                                <p className="text-[11px] text-slate-500 mt-1">
-                                  Todos los carros de la OT se cuentan igual.
-                                </p>
-                              </div>
+                              <p className="text-[11px] text-slate-500">
+                                {datosOt?.categoria
+                                  ? `${datosOt.categoria}: se cuenta en ${tipoPk}.`
+                                  : `Se cuenta en ${tipoPk}.`}{' '}
+                                Las {tipoPk} de cada carro vienen de Amasado
+                                (y de la revisión de calidad en horno).
+                              </p>
 
                               {carrosPk.map((c, i) => (
                                 <div
@@ -2541,27 +2538,14 @@ export default function App() {
                                         className={ESTILO_INPUT}
                                       />
                                     </div>
-                                    <div>
-                                      <label className={ESTILO_LABEL}>
-                                        {tipoPk === 'latas' ? 'Latas' : 'Unidades'}
-                                      </label>
-                                      <input
-                                        type="number"
-                                        min="1"
-                                        step="1"
-                                        inputMode="numeric"
-                                        value={c.cantidad}
-                                        onChange={(e) =>
-                                          cambiarCarroPk(i, 'cantidad', e.target.value)
-                                        }
-                                        className={ESTILO_INPUT}
-                                      />
-                                    </div>
+                                    {campoCantidadPk(c.numero, c.cantidad, (v) =>
+                                      cambiarCarroPk(i, 'cantidad', v)
+                                    )}
                                     <div>
                                       <label className={ESTILO_LABEL}>Cajas</label>
                                       <input
                                         type="number"
-                                        min="1"
+                                        min="0"
                                         step="1"
                                         inputMode="numeric"
                                         value={c.cajas}
@@ -2585,22 +2569,23 @@ export default function App() {
                                 + Agregar otro carro
                               </button>
 
-                              {carrosPk.some(carroPkLleno) && (
+                              {carrosPkEf.some(carroPkLleno) && (
                                 <p className="text-xs font-bold text-slate-600">
                                   Total empacado:{' '}
-                                  {carrosPk
+                                  {carrosPkEf
                                     .filter(carroPkLleno)
                                     .reduce((a, c) => a + Number(c.cantidad), 0)}{' '}
                                   {tipoPk} ·{' '}
-                                  {carrosPk
+                                  {carrosPkEf
                                     .filter(carroPkLleno)
                                     .reduce((a, c) => a + Number(c.cajas), 0)}{' '}
                                   cajas
                                 </p>
                               )}
                               <p className="text-[11px] text-slate-500">
-                                Si un carro se empaca después, deja su cantidad y
-                                cajas en blanco: se completa ingresando la misma OT.
+                                Si un carro se mermó entero, anota 0 cajas. Si se
+                                empaca después, deja sus cajas en blanco: se
+                                completa ingresando la misma OT.
                               </p>
                         <div>
                           <label className={ESTILO_LABEL}>

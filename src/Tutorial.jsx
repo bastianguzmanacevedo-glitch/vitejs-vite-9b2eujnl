@@ -121,7 +121,7 @@ export const TUTORIALES = {
     {
       titulo: 'Doble carro',
       texto:
-        'Si la OT salió en dos carros, marca "Doble carro" y completa cada carro (N°, unidades y cajas). Si un carro se empaca después o en otra sala, déjalo en blanco: se completa ingresando la misma OT.',
+        'Si la OT salió en dos carros, marca "Doble carro" y anota las cajas de cada carro. Las latas o unidades vienen de Amasado. Si un carro se mermó entero, anota 0 cajas. Si se empaca después o en otra sala, deja sus cajas en blanco: se completa ingresando la misma OT.',
     },
     {
       titulo: 'Si la OT ya estaba registrada',
