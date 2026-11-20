@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   addDoc,
   collection,
+  deleteDoc,
   deleteField,
   doc,
   FieldPath,
@@ -254,10 +255,13 @@ export function PlanificacionBodega({ session, registros, onRegistrar }) {
       const previos = await getDocs(
         query(collection(db, COL_OTS), where('otNumber', '==', ot.otNumber))
       );
-      if (previos.docs.some((d) => d.data().etapa === 'Bodega')) {
+      const enBodega = previos.docs.filter((d) => d.data().etapa === 'Bodega');
+      if (enBodega.some((d) => !d.data().registroAutomatico)) {
         setErrorMsg(`La OT #${ot.otNumber} ya fue registrada en Bodega.`);
         return;
       }
+      // El registro automático da paso al registro real del bodeguero
+      for (const d of enBodega) await deleteDoc(d.ref);
       const ahora = new Date();
       const categoriaValida = !!CATALOGO_PAN[ot.categoria];
       await addDoc(collection(db, COL_OTS), {

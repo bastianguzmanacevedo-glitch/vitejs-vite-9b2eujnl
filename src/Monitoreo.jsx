@@ -662,6 +662,19 @@ export default function Monitoreo() {
                     </td>
                     <td className="px-6 py-4 font-bold text-slate-700">
                       {ot.operario}
+                      {ot.registroAutomatico && (
+                        <span
+                          className="block text-[11px] font-medium text-slate-400 whitespace-nowrap"
+                          title={`Se completó solo al registrar ${ot.origenAutomatico}${ot.registradoPor ? ` (${ot.registradoPor})` : ''}`}
+                        >
+                          al registrar {ot.origenAutomatico}
+                          {ot.datosDesdeFoto
+                            ? ' · datos de la foto'
+                            : ot.pendienteFoto
+                            ? ' · falta foto'
+                            : ''}
+                        </span>
+                      )}
                     </td>
                     <td className="px-6 py-4 text-xs text-slate-500 font-medium space-y-1">
                       <div className="flex items-center gap-1.5">

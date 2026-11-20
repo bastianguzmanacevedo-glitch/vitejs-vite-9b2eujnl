@@ -81,7 +81,7 @@ export const TUTORIALES = {
     {
       titulo: 'Marca "Horneado"',
       texto:
-        'Cuando el carro salga del horno, marca la casilla "Horneado" y toca "Registrar OT en Horneado".',
+        'Cuando el carro salga del horno, marca la casilla "Horneado". Si puedes, agrega una foto clara de la OT (sirve para completar lo que falte). Luego toca "Registrar OT en Horneado".',
     },
     PASO_AJUSTES,
   ],

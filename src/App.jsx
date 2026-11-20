@@ -63,6 +63,7 @@ import {
   RESULTADOS_CALIDAD,
 } from './catalogo';
 import { DetalleCarrosPacking } from './CarrosPacking';
+import { completarEtapasAnteriores, quitarAutomatico } from './autoEtapas';
 
 // Contraseña numérica del Panel Administrador SAP (y de la etapa Control SAP)
 const ADMIN_PIN = '2640';
@@ -363,7 +364,7 @@ export default function App() {
     infoOt && infoOt.otNumber === numOt.trim() ? infoOt : null;
   const regAmasado = infoVigente?.registros.find((r) => r.etapa === 'Amasado');
   const regHorneado = infoVigente?.registros.find((r) => r.etapa === 'Horneado');
-  const regPacking = infoVigente?.registros.find((r) => r.etapa === 'Packing');
+  const regPacking = infoVigente?.registros.find((r) => r.etapa === 'Packing' && !r.registroAutomatico);
   // El Packing de la OT quedó con un carro pendiente: se completa ese registro
   const completarPacking =
     etapaActual === 'Packing' && regPacking?.carrosCompletos === false;
@@ -514,7 +515,7 @@ export default function App() {
   useEffect(() => {
     if (etapaActual !== 'Packing' || !infoOt || infoOt.cargando) return;
     const regs = infoOt.registros;
-    const packing = regs.find((r) => r.etapa === 'Packing');
+    const packing = regs.find((r) => r.etapa === 'Packing' && !r.registroAutomatico);
     if (packing?.carrosCompletos === false) {
       setTipoPk(
         packing.tipoCantidadTotal || packing.carros?.[0]?.tipoCantidad || 'unidades'
@@ -1089,6 +1090,17 @@ export default function App() {
       // Si el horno ya registró la OT, control de calidad completa ese registro
       if (esCalidadHorno && previoHorneado) {
         await updateDoc(doc(db, COL_OTS, previoHorneado.id), datosCalidad);
+        await completarEtapasAnteriores({
+          otNumber,
+          etapa: 'Horneado',
+          previos: datosPrevios,
+          categoria: previoHorneado.categoria,
+          variedad: previoHorneado.variedad,
+          batches: datosCalidad.batches ?? previoHorneado.batches,
+          usuario: session.user,
+          fechaStr,
+          horaStr,
+        });
         setSuccessMsg(
           `¡Control de calidad en horno guardado para la OT #${otNumber}!${notaCarros}`
         );
@@ -1097,7 +1109,7 @@ export default function App() {
       }
 
       // Packing con carro pendiente: se completa el mismo registro
-      const previoPacking = datosPrevios.find((d) => d.etapa === 'Packing');
+      const previoPacking = datosPrevios.find((d) => d.etapa === 'Packing' && !d.registroAutomatico);
       if (etapa === 'Packing' && previoPacking?.carrosCompletos === false) {
         if (!completarPacking) {
           setErrorMsg(
@@ -1225,15 +1237,21 @@ export default function App() {
         return;
       }
 
-      // Bloquea OTs duplicadas en la misma etapa
-      if (datosPrevios.some((d) => d.etapa === etapa)) {
+      // Bloquea OTs duplicadas en la misma etapa. Un registro automático de
+      // esta etapa (creado porque la OT pasó a una etapa siguiente) se
+      // reemplaza por el registro real.
+      const mismaEtapa = datosPrevios.filter((d) => d.etapa === etapa);
+      if (mismaEtapa.some((d) => !d.registroAutomatico)) {
         setErrorMsg(`La OT #${otNumber} ya fue registrada en la etapa ${etapa}.`);
         return;
       }
+      for (const d of mismaEtapa) await quitarAutomatico(d);
 
-      // Solo Control SAP lleva foto (opcional): la foto definitiva de la OT
+      // Foto de la OT (opcional): en Horneado y Control SAP (la definitiva).
+      // Sirve también para completar las etapas que quedaron sin registrar.
       let photoURL = null;
-      if (fotoBase64 && esControlSap) {
+      const llevaFoto = esControlSap || (etapa === 'Horneado' && !esCalidadHorno);
+      if (fotoBase64 && llevaFoto) {
         const photoRef = ref(
           storage,
           `${CARPETA_FOTOS}/${otNumber}_${etapa}_${Date.now()}.jpg`
@@ -1361,6 +1379,32 @@ export default function App() {
           horaStr
         );
       }
+
+      // Amasado registrado después de las etapas siguientes: su carro pasa a
+      // los registros que quedaron sin carro
+      if (etapa === 'Amasado' && batches) {
+        for (const d of datosPrevios) {
+          if (['Bodega', 'Amasado'].includes(d.etapa) || d.batches) continue;
+          try {
+            await updateDoc(doc(db, COL_OTS, d.id), { batches });
+          } catch (err) {
+            console.error('No se pudo pasar el carro a', d.etapa, err);
+          }
+        }
+      }
+
+      // Etapas anteriores que quedaron sin registrar (Bodega a Packing)
+      await completarEtapasAnteriores({
+        otNumber,
+        etapa,
+        previos: datosPrevios.filter((d) => !mismaEtapa.includes(d)),
+        categoria,
+        variedad,
+        batches,
+        usuario: session.user,
+        fechaStr,
+        horaStr,
+      });
 
       // Si se subió una foto nueva, borra las fotos de etapas anteriores
       // para dejar solo una foto por OT y ahorrar espacio en Storage.
@@ -2722,10 +2766,10 @@ export default function App() {
                     </>
                   )}
 
-                  {esControlSap && (
+                  {(esControlSap || (etapaActual === 'Horneado' && !esCalidadHorno)) && (
                     <div className="pt-2">
                       <label className={`${ESTILO_LABEL} mb-2 text-center`}>
-                        Foto definitiva de la OT (opcional)
+                        {esControlSap ? 'Foto definitiva de la OT (opcional)' : 'Foto de la OT (opcional)'}
                       </label>
                       <div className="flex justify-center px-6 pt-6 pb-7 border-2 border-slate-200 border-dashed rounded-2xl hover:border-amber-500 hover:bg-amber-50/30 transition-all bg-slate-50 relative">
                         {fotoBase64 ? (
