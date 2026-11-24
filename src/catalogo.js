@@ -134,6 +134,17 @@ export const RESULTADOS_CALIDAD = {
   rechazada: 'Rechazada al 100%',
 };
 
+// Rechazo parcial con el resto para selección (las dos mermas a la vez)
+export const textoCalidadHorno = (ot, tipo = ot.tipoCantidad || 'unidades') =>
+  ot.resultadoCalidad === 'parcial'
+    ? `${ot.unidadesRechazadas} ${tipo} rechazadas${ot.paraSeleccion ? ' y resto para selección' : ''}`
+    : RESULTADOS_CALIDAD[ot.resultadoCalidad];
+
+// La OT quedó (toda o el resto) para selección: Packing anota las mermas
+export const quedaParaSeleccion = (ot) =>
+  ot?.resultadoCalidad === 'seleccion' ||
+  (ot?.resultadoCalidad === 'parcial' && !!ot?.paraSeleccion);
+
 export const textoProduccion = (ot, { conCalidad = true } = {}) => {
   const partes = [];
   const tipo = ot.tipoCantidad || 'unidades';
@@ -147,7 +158,7 @@ export const textoProduccion = (ot, { conCalidad = true } = {}) => {
   if (!conCalidad) {
     // Sin liberación en horno ni mermas
   } else if (ot.resultadoCalidad === 'parcial') {
-    partes.push(`${ot.unidadesRechazadas} ${tipo} rechazadas`);
+    partes.push(textoCalidadHorno(ot, tipo));
   } else if (ot.resultadoCalidad === 'seleccion') {
     partes.push('para selección');
   } else if (ot.resultadoCalidad === 'rechazada') {

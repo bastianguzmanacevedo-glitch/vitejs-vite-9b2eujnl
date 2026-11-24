@@ -59,8 +59,10 @@ import {
   carroCompleto,
   ETAPAS,
   esPersonaCalidad,
+  quedaParaSeleccion,
   resumenCarros,
   RESULTADOS_CALIDAD,
+  textoCalidadHorno,
 } from './catalogo';
 import { DetalleCarrosPacking } from './CarrosPacking';
 import { completarEtapasAnteriores, quitarAutomatico } from './autoEtapas';
@@ -190,9 +192,7 @@ const TarjetaOt = ({ info, amasado, horneado, packing, origen, resumenCalidad })
   if (horneado?.resultadoCalidad) {
     filas.push([
       'Calidad en horno',
-      horneado.resultadoCalidad === 'parcial'
-        ? `${horneado.unidadesRechazadas} ${tipo} rechazadas`
-        : RESULTADOS_CALIDAD[horneado.resultadoCalidad],
+      textoCalidadHorno(horneado, tipo),
     ]);
   }
   // Control de calidad (etapa 5): resumen de lo liberado y lo mermado
@@ -211,7 +211,7 @@ const TarjetaOt = ({ info, amasado, horneado, packing, origen, resumenCalidad })
     else if (producidas == null) liberadas = '—';
     else {
       liberadas = `${Math.max(producidas - rechazadasHorno, 0)} ${tipo}`;
-      if (resultado === 'seleccion') liberadas += ' (para selección)';
+      if (quedaParaSeleccion(horneado)) liberadas += ' (para selección)';
     }
     const totalMermas = rechazadasHorno + mermasPacking;
     const detalleMermas =
@@ -293,6 +293,8 @@ export default function App() {
   const [cantidadCorregida, setCantidadCorregida] = useState('');
   const [resultadoCalidad, setResultadoCalidad] = useState('aprobada');
   const [unidadesRechazadas, setUnidadesRechazadas] = useState('');
+  // Rechazo parcial con el resto para selección (las dos opciones a la vez)
+  const [paraSeleccion, setParaSeleccion] = useState(false);
   // Calidad en horno: N° de carro (lo puede corregir si Amasado lo ingresó mal)
   const [carroHorno, setCarroHorno] = useState('');
   // Calidad (en horno o etapa 5): doble carro que Amasado olvidó registrar
@@ -373,7 +375,7 @@ export default function App() {
     etapaActual === 'Packing' && !!regPacking && !completarPacking;
   // OT "Para selección" en el horno: Packing debe anotar al menos 1 merma
   const mermasObligatorias =
-    etapaActual === 'Packing' && regHorneado?.resultadoCalidad === 'seleccion';
+    etapaActual === 'Packing' && quedaParaSeleccion(regHorneado);
   // El Packing guardado no tiene detalle por carro (se registró con un carro)
   const convertirPacking = agregarPacking && !(regPacking.carros?.length > 0);
   // Packing no cuenta latas ni unidades: las de cada carro vienen de Amasado
@@ -507,6 +509,7 @@ export default function App() {
     );
     setResultadoCalidad(horneado?.resultadoCalidad || 'aprobada');
     setUnidadesRechazadas(String(horneado?.unidadesRechazadas ?? ''));
+    setParaSeleccion(horneado?.resultadoCalidad === 'parcial' && !!horneado?.paraSeleccion);
     setCarroHorno(String(horneado?.batches || amasado?.batches || ''));
   }, [infoOt, esCalidadHorno]);
 
@@ -1043,6 +1046,9 @@ export default function App() {
           resultadoCalidad,
           unidadesRechazadas:
             resultadoCalidad === 'parcial' ? Number(unidadesRechazadas) : null,
+          paraSeleccion:
+            resultadoCalidad === 'seleccion' ||
+            (resultadoCalidad === 'parcial' && paraSeleccion),
           // Con doble carro corregido, lo producido queda en Amasado (la suma)
           cantidadCorregida:
             !carrosCorregidos && corregida !== contadas ? corregida : null,
@@ -2213,14 +2219,35 @@ export default function App() {
                         <label className={ESTILO_LABEL}>Resultado</label>
                         <div className="grid grid-cols-2 gap-2">
                           {Object.entries(RESULTADOS_CALIDAD).map(
-                            ([id, texto]) => (
+                            ([id, texto]) => {
+                              // "Rechazo parcial" y "Para selección" se pueden marcar juntos
+                              const marcado =
+                                resultadoCalidad === id ||
+                                (id === 'seleccion' && resultadoCalidad === 'parcial' && paraSeleccion);
+                              const elegir = () => {
+                                const ambos =
+                                  (id === 'parcial' && resultadoCalidad === 'seleccion') ||
+                                  (id === 'seleccion' && resultadoCalidad === 'parcial');
+                                if (ambos) {
+                                  setResultadoCalidad('parcial');
+                                  setParaSeleccion(id === 'seleccion' ? !paraSeleccion : true);
+                                } else if (id === 'parcial' && resultadoCalidad === 'parcial' && paraSeleccion) {
+                                  // Desmarca el rechazo y queda solo para selección
+                                  setResultadoCalidad('seleccion');
+                                  setParaSeleccion(false);
+                                } else {
+                                  setResultadoCalidad(id);
+                                  setParaSeleccion(false);
+                                }
+                              };
+                              return (
                               <button
                                 key={id}
                                 type="button"
-                                onClick={() => setResultadoCalidad(id)}
-                                aria-pressed={resultadoCalidad === id}
+                                onClick={elegir}
+                                aria-pressed={marcado}
                                 className={`py-3 px-2 rounded-xl text-xs font-bold border transition-all ${
-                                  resultadoCalidad === id
+                                  marcado
                                     ? id === 'aprobada'
                                       ? 'bg-emerald-600 text-white border-emerald-600'
                                       : id === 'rechazada'
@@ -2231,9 +2258,13 @@ export default function App() {
                               >
                                 {texto}
                               </button>
-                            )
+                              );
+                            }
                           )}
                         </div>
+                        <p className="text-[11px] text-slate-500 mt-1.5">
+                          Puedes marcar "Rechazo parcial" y "Para selección" juntos.
+                        </p>
                       </div>
 
                       {resultadoCalidad === 'parcial' && (
@@ -2254,10 +2285,12 @@ export default function App() {
                           />
                         </div>
                       )}
-                      {resultadoCalidad === 'seleccion' && (
+                      {(resultadoCalidad === 'seleccion' ||
+                        (resultadoCalidad === 'parcial' && paraSeleccion)) && (
                         <p className="text-xs text-amber-800 font-medium">
-                          En Packing seleccionarán las unidades buenas y anotarán
-                          las mermas.
+                          {resultadoCalidad === 'parcial'
+                            ? 'Las rechazadas quedan como merma y el resto va a selección: en Packing seleccionarán las unidades buenas y anotarán las mermas.'
+                            : 'En Packing seleccionarán las unidades buenas y anotarán las mermas.'}
                         </p>
                       )}
                     </div>

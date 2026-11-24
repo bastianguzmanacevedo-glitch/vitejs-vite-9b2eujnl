@@ -30,6 +30,7 @@ import {
   isoLocal,
   rangoPreset,
   textoProduccion,
+  textoCalidadHorno,
   RESULTADOS_CALIDAD,
 } from './catalogo';
 import { DetalleCarrosPacking } from './CarrosPacking';
@@ -76,9 +77,7 @@ const Liberacion = ({ ot }) => {
       >
         {ot.resultadoCalidad === 'aprobada'
           ? 'Liberada'
-          : ot.resultadoCalidad === 'parcial'
-          ? `${ot.unidadesRechazadas} ${tipo} rechazadas`
-          : RESULTADOS_CALIDAD[ot.resultadoCalidad]}
+          : textoCalidadHorno(ot, tipo)}
       </span>
       {ot.cantidadCorregida != null && (
         <p className="text-xs font-bold text-slate-600">
@@ -337,7 +336,8 @@ export default function Monitoreo() {
       ot.rechazada100 ? 'Si' : '',
       ot.rechazoParcial ? 'Si' : '',
       ot.cantidadCorregida,
-      RESULTADOS_CALIDAD[ot.resultadoCalidad] || '',
+      (RESULTADOS_CALIDAD[ot.resultadoCalidad] || '') +
+        (ot.resultadoCalidad === 'parcial' && ot.paraSeleccion ? ' + Para selección' : ''),
       ot.unidadesRechazadas,
       ot.revisadoPor,
       ot.mermas,

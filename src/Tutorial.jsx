@@ -99,7 +99,7 @@ export const TUTORIALES = {
     {
       titulo: 'Elige el resultado',
       texto:
-        'Sin rechazo, Rechazo parcial (con las unidades rechazadas), Para selección o Rechazada al 100%. Si eliges "Para selección", Packing deberá anotar las mermas.',
+        'Sin rechazo, Rechazo parcial (con las unidades rechazadas), Para selección o Rechazada al 100%. Puedes marcar "Rechazo parcial" y "Para selección" juntos: las rechazadas son merma y el resto va a selección. Con "Para selección", Packing deberá anotar las mermas.',
     },
     {
       titulo: 'Guarda',
