@@ -383,13 +383,16 @@ export default function App() {
   const agregarPacking =
     etapaActual === 'Packing' && !!regPacking && !completarPacking;
   // Etapas anteriores sin datos (sin registro, o registro automático que aún
-  // no los tiene): Horneado pide los de Amasado y Control de calidad, los de
-  // Amasado y Packing. Están en la OT física.
+  // no los tiene): Horneado y Packing piden los de Amasado y Control de
+  // calidad, los de Amasado y Packing. Están en la OT física.
   const otCargada = !!infoVigente && !infoVigente.cargando;
   const regPackingTodos = infoVigente?.registros.find((r) => r.etapa === 'Packing');
   const pideAmasado =
     otCargada &&
-    (etapaActual === 'Horneado' || etapaActual === 'Control de calidad') &&
+    (etapaActual === 'Horneado' ||
+      etapaActual === 'Control de calidad' ||
+      // Packing nuevo (no al completar o agregar carros a uno ya guardado)
+      (etapaActual === 'Packing' && !regPacking)) &&
     (!regAmasado ||
       (regAmasado.registroAutomatico && regAmasado.cantidadProducida == null));
   const pidePacking =
@@ -406,7 +409,15 @@ export default function App() {
   // (corregidas por calidad en horno, si las corrigió). null si no se saben.
   const cantidadDeCarro = (numero) => {
     const n = String(numero ?? '').trim();
-    if (!n || !regAmasado) return null;
+    if (!n) return null;
+    // Sin datos de Amasado: los que se copian de la OT física en este registro
+    if (pideAmasado) {
+      const c = (amFaltaDoble ? amFalta : amFalta.slice(0, 1)).find(
+        (x) => x.carro && Number(x.carro) === Number(n)
+      );
+      return c && ES_ENTERO.test(String(c.cantidad).trim()) ? Number(c.cantidad) : null;
+    }
+    if (!regAmasado) return null;
     if (regAmasado.carros?.length) {
       const c = regAmasado.carros.find((x) => Number(x.carro) === Number(n));
       return c?.cantidad ?? null;
@@ -587,6 +598,17 @@ export default function App() {
         : [carroPkVacio(numeros[0] || ''), carroPkVacio()]
     );
   }, [infoOt, etapaActual]);
+
+  // Packing sin datos de Amasado: sus carros son los copiados de la OT física
+  useEffect(() => {
+    if (etapaActual !== 'Packing' || !pideAmasado) return;
+    setDobleCarro(amFaltaDoble);
+    setCarrosPk((lista) =>
+      amFaltaDoble
+        ? amFalta.map((c, i) => ({ ...(lista[i] || carroPkVacio()), numero: c.carro }))
+        : [{ ...(lista[0] || carroPkVacio()), numero: amFalta[0].carro }, carroPkVacio()]
+    );
+  }, [amFalta, amFaltaDoble, pideAmasado, etapaActual]);
 
   // Control de calidad: parte con las mermas que anotó Packing (se pueden corregir)
   useEffect(() => {
@@ -853,6 +875,23 @@ export default function App() {
     if (pideCarro && infoVigente?.cargando) {
       return setErrorMsg('Espera un momento: se está buscando la OT');
     }
+    if (pideAmasado) {
+      const lista = amFaltaDoble ? amFalta : amFalta.slice(0, 1);
+      for (const [i, c] of lista.entries()) {
+        const cual = amFaltaDoble ? ` del carro ${i + 1}` : '';
+        if (!ES_ENTERO.test(c.carro.trim())) {
+          return setErrorMsg(`Ingresa el N° de carro${cual} (dato de Amasado)`);
+        }
+        if (!ES_ENTERO.test(String(c.cantidad).trim())) {
+          return setErrorMsg(
+            `Ingresa ${tipoCantidad === 'latas' ? 'las latas' : 'las unidades'}${cual} (dato de Amasado)`
+          );
+        }
+      }
+      if (amFaltaDoble && Number(lista[0].carro) === Number(lista[1].carro)) {
+        return setErrorMsg('Hay dos carros con el mismo número');
+      }
+    }
     if (etapa === 'Amasado' && (!categoriaSel || !variedadSel)) {
       return setErrorMsg('Selecciona el tipo de pan y la variedad');
     }
@@ -937,23 +976,6 @@ export default function App() {
     }
     if (etapa === 'Horneado' && !esCalidadHorno && !horneadoOk) {
       return setErrorMsg('Marca la casilla "Horneado" para confirmar');
-    }
-    if (pideAmasado) {
-      const lista = amFaltaDoble ? amFalta : amFalta.slice(0, 1);
-      for (const [i, c] of lista.entries()) {
-        const cual = amFaltaDoble ? ` del carro ${i + 1}` : '';
-        if (!ES_ENTERO.test(c.carro.trim())) {
-          return setErrorMsg(`Ingresa el N° de carro${cual} (dato de Amasado)`);
-        }
-        if (!ES_ENTERO.test(String(c.cantidad).trim())) {
-          return setErrorMsg(
-            `Ingresa ${tipoCantidad === 'latas' ? 'las latas' : 'las unidades'}${cual} (dato de Amasado)`
-          );
-        }
-      }
-      if (amFaltaDoble && Number(lista[0].carro) === Number(lista[1].carro)) {
-        return setErrorMsg('Hay dos carros con el mismo número');
-      }
     }
     if (pidePacking) {
       if (!ES_ENTERO.test(pkFaltaCajas.trim())) {
@@ -1592,7 +1614,7 @@ export default function App() {
               <p className="text-sm font-black text-sky-900">Datos de Amasado</p>
               <p className="text-xs text-slate-500">
                 Esta OT no tiene los datos de Amasado: cópialos de la OT física.
-                Bodega y Amasado quedarán marcados solos.
+                Las etapas anteriores quedarán marcadas solas.
               </p>
             </div>
             {carros.map((c, i) => (
@@ -2555,6 +2577,7 @@ export default function App() {
 
                   {session.etapa === 'Packing' && (
                     <>
+                      {bloqueDatosFaltantes()}
                       {mermasObligatorias && (
                         <div className="p-4 bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-2xl flex items-center gap-3">
                           <AlertTriangle className="w-5 h-5 shrink-0 text-amber-600" />
@@ -2798,6 +2821,8 @@ export default function App() {
                         </div>
                       ) : (
                         <>
+                          {/* Sin datos de Amasado, el doble carro se marca en "Datos de Amasado" */}
+                          {!pideAmasado && (
                           <label
                             className={`flex items-center gap-3 p-3.5 rounded-2xl border cursor-pointer transition-all ${
                               dobleCarro
@@ -2821,6 +2846,7 @@ export default function App() {
                               </span>
                             </span>
                           </label>
+                          )}
 
                           {dobleCarro ? (
                             <div className="space-y-4">

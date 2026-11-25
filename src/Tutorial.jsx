@@ -119,6 +119,11 @@ export const TUTORIALES = {
         'Al escribir el N° de OT verás el pan, el carro y la liberación en horno.',
     },
     {
+      titulo: 'Si falta Amasado',
+      texto:
+        'Si la OT no se registró en Amasado, la app te pedirá el N° de carro y las latas o unidades: cópialos de la OT física. Las etapas anteriores quedan marcadas solas.',
+    },
+    {
       titulo: 'Cajas y mermas',
       texto:
         'Ingresa las cajas y, si hubo, las mermas. Si la OT quedó "Para selección" en el horno, las mermas son obligatorias.',
