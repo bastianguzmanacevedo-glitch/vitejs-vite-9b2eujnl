@@ -189,30 +189,35 @@ const TarjetaOt = ({ info, amasado, horneado, packing, origen, resumenCalidad })
   if (packing?.mermas != null && !resumenCalidad) {
     filas.push(['Mermas en Packing', `${packing.mermas} ${tipo}`]);
   }
-  if (horneado?.resultadoCalidad) {
+  // Lo liberado en horno: lo producido menos lo rechazado por calidad
+  const resultado = horneado?.resultadoCalidad;
+  const producidas = horneado?.cantidadCorregida ?? amasado?.cantidadProducida;
+  const rechazadasHorno =
+    resultado === 'parcial'
+      ? horneado.unidadesRechazadas || 0
+      : resultado === 'rechazada'
+      ? producidas ?? 0
+      : 0;
+  let liberadas;
+  if (!resultado) liberadas = 'Sin liberación en horno';
+  else if (producidas == null) liberadas = '—';
+  else {
+    liberadas = `${Math.max(producidas - rechazadasHorno, 0)} ${tipo}`;
+    if (quedaParaSeleccion(horneado)) liberadas += ' (para selección)';
+  }
+  const tituloLiberadas =
+    tipo === 'latas' ? 'Latas liberadas' : 'Unidades liberadas';
+  if (resultado) {
     filas.push([
       'Calidad en horno',
       textoCalidadHorno(horneado, tipo),
     ]);
+    // Al lado de la calidad en horno (Control de calidad la muestra abajo)
+    if (!resumenCalidad) filas.push([tituloLiberadas, liberadas]);
   }
   // Control de calidad (etapa 5): resumen de lo liberado y lo mermado
   if (resumenCalidad) {
-    const resultado = horneado?.resultadoCalidad;
-    const producidas = horneado?.cantidadCorregida ?? amasado?.cantidadProducida;
-    const rechazadasHorno =
-      resultado === 'parcial'
-        ? horneado.unidadesRechazadas || 0
-        : resultado === 'rechazada'
-        ? producidas ?? 0
-        : 0;
     const mermasPacking = packing?.mermas ?? 0;
-    let liberadas;
-    if (!resultado) liberadas = 'Sin liberación en horno';
-    else if (producidas == null) liberadas = '—';
-    else {
-      liberadas = `${Math.max(producidas - rechazadasHorno, 0)} ${tipo}`;
-      if (quedaParaSeleccion(horneado)) liberadas += ' (para selección)';
-    }
     const totalMermas = rechazadasHorno + mermasPacking;
     const detalleMermas =
       rechazadasHorno && mermasPacking
@@ -222,10 +227,7 @@ const TarjetaOt = ({ info, amasado, horneado, packing, origen, resumenCalidad })
         : mermasPacking
         ? ' (packing)'
         : '';
-    filas.push([
-      tipo === 'latas' ? 'Latas liberadas' : 'Unidades liberadas',
-      liberadas,
-    ]);
+    filas.push([tituloLiberadas, liberadas]);
     filas.push([
       tipo === 'latas' ? 'Latas mermadas' : 'Unidades mermadas',
       `${totalMermas} ${tipo}${detalleMermas}`,
@@ -241,7 +243,16 @@ const TarjetaOt = ({ info, amasado, horneado, packing, origen, resumenCalidad })
       )}
       <dl className="grid grid-cols-2 gap-x-4 gap-y-2">
         {filas.map(([titulo, valor]) => (
-          <div key={titulo} className={titulo === 'Variedad' ? 'col-span-2' : ''}>
+          <div
+            key={titulo}
+            className={
+              titulo === 'Variedad'
+                ? 'col-span-2'
+                : titulo === 'Calidad en horno'
+                ? 'col-start-1'
+                : ''
+            }
+          >
             <dt className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
               {titulo}
             </dt>
