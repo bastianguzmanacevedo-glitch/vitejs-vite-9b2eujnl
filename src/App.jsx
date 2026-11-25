@@ -304,6 +304,15 @@ export default function App() {
     { carro: '', cantidad: '' },
   ]);
   const [mermas, setMermas] = useState('');
+  // Datos de la OT física que faltan de etapas anteriores: Horneado ingresa los
+  // de Amasado; Control de calidad, los de Amasado y Packing
+  const [amFalta, setAmFalta] = useState(() => [
+    { carro: '', cantidad: '' },
+    { carro: '', cantidad: '' },
+  ]);
+  const [amFaltaDoble, setAmFaltaDoble] = useState(false);
+  const [pkFaltaCajas, setPkFaltaCajas] = useState('');
+  const [pkFaltaMermas, setPkFaltaMermas] = useState('');
   // Lo que ya se sabe de la OT ingresada (registros y planificación)
   const [infoOt, setInfoOt] = useState(null);
   const [fotoBase64, setFotoBase64] = useState(null);
@@ -373,6 +382,21 @@ export default function App() {
   // El Packing de la OT ya está completo: se le puede agregar otro carro
   const agregarPacking =
     etapaActual === 'Packing' && !!regPacking && !completarPacking;
+  // Etapas anteriores sin datos (sin registro, o registro automático que aún
+  // no los tiene): Horneado pide los de Amasado y Control de calidad, los de
+  // Amasado y Packing. Están en la OT física.
+  const otCargada = !!infoVigente && !infoVigente.cargando;
+  const regPackingTodos = infoVigente?.registros.find((r) => r.etapa === 'Packing');
+  const pideAmasado =
+    otCargada &&
+    (etapaActual === 'Horneado' || etapaActual === 'Control de calidad') &&
+    (!regAmasado ||
+      (regAmasado.registroAutomatico && regAmasado.cantidadProducida == null));
+  const pidePacking =
+    otCargada &&
+    etapaActual === 'Control de calidad' &&
+    (!regPackingTodos ||
+      (regPackingTodos.registroAutomatico && regPackingTodos.cajas == null));
   // OT "Para selección" en el horno: Packing debe anotar al menos 1 merma
   const mermasObligatorias =
     etapaActual === 'Packing' && quedaParaSeleccion(regHorneado);
@@ -732,6 +756,13 @@ export default function App() {
     setResultadoCalidad('aprobada');
     setUnidadesRechazadas('');
     setCarroHorno('');
+    setAmFalta([
+      { carro: '', cantidad: '' },
+      { carro: '', cantidad: '' },
+    ]);
+    setAmFaltaDoble(false);
+    setPkFaltaCajas('');
+    setPkFaltaMermas('');
     setDobleCorr(false);
     setCarrosCorr([
       { carro: '', cantidad: '' },
@@ -907,7 +938,33 @@ export default function App() {
     if (etapa === 'Horneado' && !esCalidadHorno && !horneadoOk) {
       return setErrorMsg('Marca la casilla "Horneado" para confirmar');
     }
-    const usaDobleCorr = editaCarros && dobleCorr;
+    if (pideAmasado) {
+      const lista = amFaltaDoble ? amFalta : amFalta.slice(0, 1);
+      for (const [i, c] of lista.entries()) {
+        const cual = amFaltaDoble ? ` del carro ${i + 1}` : '';
+        if (!ES_ENTERO.test(c.carro.trim())) {
+          return setErrorMsg(`Ingresa el N° de carro${cual} (dato de Amasado)`);
+        }
+        if (!ES_ENTERO.test(String(c.cantidad).trim())) {
+          return setErrorMsg(
+            `Ingresa ${tipoCantidad === 'latas' ? 'las latas' : 'las unidades'}${cual} (dato de Amasado)`
+          );
+        }
+      }
+      if (amFaltaDoble && Number(lista[0].carro) === Number(lista[1].carro)) {
+        return setErrorMsg('Hay dos carros con el mismo número');
+      }
+    }
+    if (pidePacking) {
+      if (!ES_ENTERO.test(pkFaltaCajas.trim())) {
+        return setErrorMsg('Ingresa las cajas empacadas (dato de Packing, 0 si se mermó todo)');
+      }
+      if (pkFaltaMermas.trim() !== '' && !ES_ENTERO.test(pkFaltaMermas.trim())) {
+        return setErrorMsg('Las mermas de Packing deben ser un número entero');
+      }
+    }
+    // Sin datos de Amasado se ingresan arriba: no hay carros que corregir
+    const usaDobleCorr = editaCarros && dobleCorr && !pideAmasado;
     if (usaDobleCorr) {
       for (const [i, c] of carrosCorr.entries()) {
         if (!ES_ENTERO.test(c.carro.trim())) {
@@ -927,6 +984,7 @@ export default function App() {
     if (esCalidadHorno) {
       if (
         !usaDobleCorr &&
+        !pideAmasado &&
         (cantidadCorregida === '' || Number(cantidadCorregida) < 0)
       ) {
         return setErrorMsg(
@@ -936,7 +994,7 @@ export default function App() {
       if (resultadoCalidad === 'parcial' && !(Number(unidadesRechazadas) > 0)) {
         return setErrorMsg('Ingresa cuántas unidades se rechazaron');
       }
-      const carroH = usaDobleCorr ? '' : carroHorno.trim();
+      const carroH = usaDobleCorr || pideAmasado ? '' : carroHorno.trim();
       if (carroH && !FORMATO_CARRO.test(carroH)) {
         return setErrorMsg('El N° de carro debe ser un número o carros separados por guion, ej. 38-17');
       }
@@ -972,6 +1030,68 @@ export default function App() {
         );
       const previoAmasado = datosPrevios.find((d) => d.etapa === 'Amasado');
       const previoHorneado = datosPrevios.find((d) => d.etapa === 'Horneado');
+
+      // Datos de la OT física que faltaban en Amasado y Packing. Si la etapa
+      // tiene un registro automático sin datos, se completa ese registro; si
+      // no tiene registro, se crea más abajo con estos datos (y Bodega se
+      // marca sola).
+      let datosAm = null;
+      const amSinDatos =
+        !previoAmasado ||
+        (previoAmasado.registroAutomatico && previoAmasado.cantidadProducida == null);
+      if (pideAmasado && amSinDatos) {
+        const lista = (amFaltaDoble ? amFalta : amFalta.slice(0, 1)).map((c) => ({
+          carro: c.carro.trim(),
+          cantidad: Number(c.cantidad),
+        }));
+        datosAm = {
+          batches: lista.map((c) => c.carro).join('-'),
+          cantidadProducida: lista.reduce((a, c) => a + c.cantidad, 0),
+          tipoCantidad,
+          ingresadoPor: session.user,
+          ingresadoEn: esCalidadHorno ? CLAVE_CALIDAD_HORNO : etapa,
+        };
+        if (lista.length > 1) datosAm.carros = lista;
+        if (previoAmasado) {
+          const cambios = { ...datosAm, pendienteFoto: false, datosIngresados: true };
+          await updateDoc(doc(db, COL_OTS, previoAmasado.id), cambios);
+          Object.assign(previoAmasado, cambios);
+        }
+        // Los registros que quedaron sin carro reciben el de Amasado
+        for (const d of datosPrevios) {
+          if (['Bodega', 'Amasado'].includes(d.etapa) || d.batches) continue;
+          try {
+            await updateDoc(doc(db, COL_OTS, d.id), { batches: datosAm.batches });
+            d.batches = datosAm.batches;
+          } catch (err) {
+            console.error('No se pudo pasar el carro a', d.etapa, err);
+          }
+        }
+      }
+      let datosPk = null;
+      const previoPkTodos = datosPrevios.find((d) => d.etapa === 'Packing');
+      if (
+        pidePacking &&
+        (!previoPkTodos ||
+          (previoPkTodos.registroAutomatico && previoPkTodos.cajas == null))
+      ) {
+        datosPk = {
+          cajas: Number(pkFaltaCajas),
+          carrosCompletos: true,
+          ingresadoPor: session.user,
+          ingresadoEn: etapa,
+        };
+        if (pkFaltaMermas.trim() !== '') datosPk.mermas = Number(pkFaltaMermas);
+        if (previoPkTodos) {
+          const cambios = { ...datosPk, pendienteFoto: false, datosIngresados: true };
+          await updateDoc(doc(db, COL_OTS, previoPkTodos.id), cambios);
+          Object.assign(previoPkTodos, cambios);
+        }
+      }
+      const datosFaltantes = {
+        ...(datosAm && { Amasado: datosAm }),
+        ...(datosPk && { Packing: datosPk }),
+      };
 
       // Doble carro que Amasado olvidó registrar: calidad (en horno o en la
       // etapa 5) lo completa en el registro de Amasado, y el N° de carro se
@@ -1050,8 +1170,11 @@ export default function App() {
             resultadoCalidad === 'seleccion' ||
             (resultadoCalidad === 'parcial' && paraSeleccion),
           // Con doble carro corregido, lo producido queda en Amasado (la suma)
+          // Sin datos de Amasado, lo contado se ingresó como dato de Amasado
           cantidadCorregida:
-            !carrosCorregidos && corregida !== contadas ? corregida : null,
+            !carrosCorregidos && !pideAmasado && corregida !== contadas
+              ? corregida
+              : null,
           revisadoPor: session.user,
           revisadoFecha: fechaStr,
           revisadoHora: horaStr,
@@ -1072,7 +1195,9 @@ export default function App() {
         const carroAnterior = String(
           previoHorneado?.batches || previoAmasado?.batches || ''
         );
-        const carroNuevo = carrosCorregidos ? '' : carroHorno.trim();
+        if (datosAm) datosCalidad.batches = datosAm.batches;
+        const carroNuevo =
+          carrosCorregidos || pideAmasado ? '' : carroHorno.trim();
         if (carroNuevo && carroNuevo !== carroAnterior) {
           datosCalidad.batches = carroNuevo;
           datosCalidad.carroAnterior = carroAnterior;
@@ -1106,6 +1231,7 @@ export default function App() {
           usuario: session.user,
           fechaStr,
           horaStr,
+          datos: datosFaltantes,
         });
         setSuccessMsg(
           `¡Control de calidad en horno guardado para la OT #${otNumber}!${notaCarros}`
@@ -1296,6 +1422,8 @@ export default function App() {
         tipoOrigen = CATEGORIAS_EN_LATAS.includes(categoria)
           ? 'latas'
           : 'unidades';
+        // Carro ingresado desde la OT física (Amasado no lo registró)
+        if (datosAm) batches = datosAm.batches;
       }
 
       const datosEtapa = {};
@@ -1352,7 +1480,8 @@ export default function App() {
       if (etapa === 'Control de calidad') {
         datosEtapa.rechazada100 = rechazada100;
         datosEtapa.rechazoParcial = !rechazada100 && rechazoParcial;
-        const previoPk = datosPrevios.find((d) => d.etapa === 'Packing');
+        const previoPk =
+          datosPrevios.find((d) => d.etapa === 'Packing') || datosPk;
         if (datosEtapa.rechazoParcial) {
           // Merma final de la OT (control de calidad la confirma o la corrige)
           datosEtapa.mermas = Number(mermasCC);
@@ -1410,6 +1539,7 @@ export default function App() {
         usuario: session.user,
         fechaStr,
         horaStr,
+        datos: datosFaltantes,
       });
 
       // Si se subió una foto nueva, borra las fotos de etapas anteriores
@@ -1442,6 +1572,131 @@ export default function App() {
     } finally {
       setUploading(false);
     }
+  };
+
+  // Datos que faltan de etapas anteriores, copiados de la OT física
+  const cambiarAmFalta = (i, campo, valor) =>
+    setAmFalta((lista) =>
+      lista.map((c, j) => (j === i ? { ...c, [campo]: valor } : c))
+    );
+  const bloqueDatosFaltantes = () => {
+    if (!pideAmasado && !pidePacking) return null;
+    const nombreCant = tipoCantidad === 'latas' ? 'Latas' : 'Unidades';
+    const carros = amFaltaDoble ? amFalta : amFalta.slice(0, 1);
+    const total = carros.reduce((a, c) => a + Number(c.cantidad || 0), 0);
+    return (
+      <div className="p-4 rounded-2xl border border-sky-200 bg-sky-50/60 space-y-4">
+        {pideAmasado && (
+          <div className="space-y-3">
+            <div>
+              <p className="text-sm font-black text-sky-900">Datos de Amasado</p>
+              <p className="text-xs text-slate-500">
+                Esta OT no tiene los datos de Amasado: cópialos de la OT física.
+                Bodega y Amasado quedarán marcados solos.
+              </p>
+            </div>
+            {carros.map((c, i) => (
+              <div key={i} className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className={ESTILO_LABEL}>
+                    {amFaltaDoble ? `Carro ${i + 1}: N° de carro` : 'N° de carro'}
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    required
+                    value={c.carro}
+                    onChange={(e) =>
+                      cambiarAmFalta(i, 'carro', e.target.value.replace(/\D/g, ''))
+                    }
+                    placeholder="Ej. 38"
+                    className={ESTILO_INPUT}
+                  />
+                </div>
+                <div>
+                  <label className={ESTILO_LABEL}>
+                    {amFaltaDoble ? `Carro ${i + 1}: ${nombreCant}` : nombreCant}
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    inputMode="numeric"
+                    required
+                    value={c.cantidad}
+                    onChange={(e) => cambiarAmFalta(i, 'cantidad', e.target.value)}
+                    className={ESTILO_INPUT}
+                  />
+                </div>
+              </div>
+            ))}
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={amFaltaDoble}
+                onChange={(e) => setAmFaltaDoble(e.target.checked)}
+                className="w-5 h-5 accent-sky-600 [color-scheme:light]"
+              />
+              <span className="text-sm font-bold text-slate-700">
+                Doble carro
+              </span>
+            </label>
+            {amFaltaDoble && (
+              <p className="text-xs font-bold text-slate-600">
+                Total de la OT: {total} {tipoCantidad}
+              </p>
+            )}
+          </div>
+        )}
+        {pidePacking && (
+          <div className="space-y-3">
+            <div>
+              <p className="text-sm font-black text-sky-900">Datos de Packing</p>
+              <p className="text-xs text-slate-500">
+                Esta OT no tiene los datos de Packing: cópialos de la OT física.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={ESTILO_LABEL}>Cajas</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  inputMode="numeric"
+                  required
+                  value={pkFaltaCajas}
+                  onChange={(e) => setPkFaltaCajas(e.target.value)}
+                  className={ESTILO_INPUT}
+                />
+              </div>
+              <div>
+                <label className={ESTILO_LABEL}>Mermas (opcional)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  inputMode="numeric"
+                  value={pkFaltaMermas}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setPkFaltaMermas(v);
+                    // Las mermas de Packing pasan al rechazo parcial (se pueden corregir)
+                    if (Number(v) > 0) {
+                      setRechazoParcial(true);
+                      setRechazada100(false);
+                      setMermasCC(v);
+                    }
+                  }}
+                  placeholder={nombreCant}
+                  className={ESTILO_INPUT}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
   };
 
   // Casilla "Doble carro" de calidad (en horno y etapa 5): completa el
@@ -2129,6 +2384,8 @@ export default function App() {
                     </>
                   )}
 
+                  {session.etapa === 'Horneado' && bloqueDatosFaltantes()}
+
                   {session.etapa === 'Horneado' && !esCalidadHorno && (
                     <label
                       className={`flex items-center gap-3 p-4 rounded-2xl border cursor-pointer transition-all ${
@@ -2167,7 +2424,7 @@ export default function App() {
                         </p>
                       </div>
 
-                      {datosOt && !dobleCorr ? (
+                      {datosOt && !dobleCorr && !pideAmasado ? (
                         <div>
                           <label className={ESTILO_LABEL}>
                             {esUnitario ? 'Unidades producidas' : 'Latas producidas'}
@@ -2189,9 +2446,9 @@ export default function App() {
                         </div>
                       ) : null}
 
-                      {bloqueDobleCarro()}
+                      {!pideAmasado && bloqueDobleCarro()}
 
-                      {!dobleCorr && (
+                      {!dobleCorr && !pideAmasado && (
                       <div>
                         <label className={ESTILO_LABEL}>N° de carro</label>
                         <input
@@ -2724,7 +2981,8 @@ export default function App() {
 
                   {session.etapa === 'Control de calidad' && (
                     <>
-                    {infoVigente && !infoVigente.cargando && bloqueDobleCarro()}
+                    {bloqueDatosFaltantes()}
+                    {otCargada && !pideAmasado && bloqueDobleCarro()}
                     <label
                       className={`flex items-center gap-3 p-4 rounded-2xl border cursor-pointer transition-all ${
                         rechazoParcial

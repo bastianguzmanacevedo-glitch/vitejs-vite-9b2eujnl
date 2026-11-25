@@ -79,6 +79,11 @@ export const TUTORIALES = {
         'Al escribir el N° de OT verás el pan, el carro y lo registrado en Amasado.',
     },
     {
+      titulo: 'Si falta Amasado',
+      texto:
+        'Si la OT no se registró en Amasado, la app te pedirá el N° de carro y las latas o unidades: cópialos de la OT física. Bodega y Amasado quedan marcados solos.',
+    },
+    {
       titulo: 'Marca "Horneado"',
       texto:
         'Cuando el carro salga del horno, marca la casilla "Horneado". Si puedes, agrega una foto clara de la OT (sirve para completar lo que falte). Luego toca "Registrar OT en Horneado".',
@@ -94,7 +99,7 @@ export const TUTORIALES = {
     {
       titulo: 'Revisa lo producido',
       texto:
-        'Revisa las unidades (o latas) y el N° de carro, y corrígelos si no coinciden. Si en Amasado olvidaron un carro, marca "Doble carro" y complétalo.',
+        'Revisa las unidades (o latas) y el N° de carro, y corrígelos si no coinciden. Si en Amasado olvidaron un carro, marca "Doble carro" y complétalo. Si la OT no se registró en Amasado, ingresa sus datos desde la OT física.',
     },
     {
       titulo: 'Elige el resultado',
@@ -135,6 +140,11 @@ export const TUTORIALES = {
       titulo: 'Escribe el N° de OT',
       texto:
         'Al escribir el N° de OT verás todo lo registrado, incluidas las unidades liberadas en horno y las unidades mermadas.',
+    },
+    {
+      titulo: 'Si falta Amasado o Packing',
+      texto:
+        'Si la OT no se registró en Amasado o en Packing, la app te pedirá esos datos (carro, latas o unidades, cajas y mermas): cópialos de la OT física. Las etapas anteriores quedan marcadas solas.',
     },
     {
       titulo: 'Si todo está bien',

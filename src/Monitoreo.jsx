@@ -668,7 +668,9 @@ export default function Monitoreo() {
                           title={`Se completó solo al registrar ${ot.origenAutomatico}${ot.registradoPor ? ` (${ot.registradoPor})` : ''}`}
                         >
                           al registrar {ot.origenAutomatico}
-                          {ot.datosDesdeFoto
+                          {ot.datosIngresados
+                            ? ` · datos de la OT física (${ot.ingresadoPor})`
+                            : ot.datosDesdeFoto
                             ? ' · datos de la foto'
                             : ot.pendienteFoto
                             ? ' · falta foto'

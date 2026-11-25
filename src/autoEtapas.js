@@ -9,6 +9,9 @@ import { CATEGORIAS_EN_LATAS } from './catalogo';
 // con pendienteFoto: true; el carro, las latas y las cajas se leen después de
 // la foto de la OT (scripts/completar_desde_foto.mjs). Control de calidad no
 // se completa: es un juicio de calidad de una persona.
+// Si quien registra ingresa los datos de la OT física (Horneado pide los de
+// Amasado; Control de calidad, los de Amasado y Packing), llegan en `datos`
+// y esa etapa queda completa, sin esperar la foto.
 
 export const OPERARIO_AUTO = 'Automático';
 const ORDEN = [
@@ -31,6 +34,7 @@ export async function completarEtapasAnteriores({
   usuario,
   fechaStr,
   horaStr,
+  datos = {},
 }) {
   const hasta = ORDEN.indexOf(etapa);
   const creadas = [];
@@ -38,7 +42,7 @@ export async function completarEtapasAnteriores({
   for (const e of ETAPAS_AUTO) {
     if (ORDEN.indexOf(e) >= hasta) break;
     if (previos.some((d) => d.etapa === e)) continue;
-    const datos = {
+    const registro = {
       otNumber,
       categoria: categoria || 'No especificada',
       variedad: variedad || 'No especificada',
@@ -54,18 +58,24 @@ export async function completarEtapasAnteriores({
       registradoPor: usuario,
     };
     if (e === 'Amasado') {
-      Object.assign(datos, {
+      Object.assign(registro, {
         cantidadProducida: null,
         tipoCantidad: tipo,
         pendienteFoto: true,
       });
     }
-    if (e === 'Horneado') Object.assign(datos, { horneado: true, tipoCantidad: tipo });
+    if (e === 'Horneado') Object.assign(registro, { horneado: true, tipoCantidad: tipo });
     if (e === 'Packing') {
-      Object.assign(datos, { cajas: null, tipoCantidad: tipo, pendienteFoto: true });
+      Object.assign(registro, { cajas: null, tipoCantidad: tipo, pendienteFoto: true });
+    }
+    if (datos[e]) {
+      Object.assign(registro, datos[e], {
+        pendienteFoto: false,
+        datosIngresados: true,
+      });
     }
     try {
-      await addDoc(collection(db, COL_OTS), datos);
+      await addDoc(collection(db, COL_OTS), registro);
       creadas.push(e);
     } catch (err) {
       // Un fallo aquí no afecta al registro de la persona
