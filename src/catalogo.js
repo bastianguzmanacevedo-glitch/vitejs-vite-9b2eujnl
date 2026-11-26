@@ -17,7 +17,7 @@ export const CATALOGO_PAN = {
   Hogazas: ['Integral linaza', 'Aceituna', 'Blanca semillas', 'Multigrano'],
   Moldes: ['Integral linaza', 'Maravilla', 'Amapola', 'Calabaza'],
   'Moldes premium': ['Multisemillas', 'Fibra', 'Proteína', 'Low Gi', 'Cinnamon'],
-  Pruebas: ['Otros'],
+  Pruebas: ['Otros', 'Cinnamon'],
 };
 
 export const ETAPAS = [
