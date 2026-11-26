@@ -82,6 +82,23 @@ const FORMATO_CARRO = /^\d+(-\d+)*$/;
 
 // --- Packing con doble carro ---
 const ES_ENTERO = /^\d+$/;
+// Un carro lleva como máximo 18 latas o 180 unidades
+const MAX_POR_CARRO = { latas: 18, unidades: 180 };
+const errorCantidadCarro = (valor, tipo, carros = 1) => {
+  const v = String(valor ?? '').trim();
+  if (v === '' || !ES_ENTERO.test(v)) return '';
+  const max = (MAX_POR_CARRO[tipo] || MAX_POR_CARRO.unidades) * carros;
+  if (Number(v) <= max) return '';
+  return carros > 1
+    ? `Cantidad errónea: ${carros} carros llevan como máximo ${max} ${tipo}`
+    : `Cantidad errónea: un carro lleva como máximo ${max} ${tipo}`;
+};
+const AvisoCantidad = ({ valor, tipo, carros }) => {
+  const error = errorCantidadCarro(valor, tipo, carros);
+  return error ? (
+    <p className="text-xs font-bold text-red-600 mt-1">{error}</p>
+  ) : null;
+};
 const carroPkVacio = (numero = '') => ({ numero, cantidad: '', cajas: '' });
 const carroPkLleno = (c) =>
   String(c.cantidad).trim() !== '' && String(c.cajas).trim() !== '';
@@ -898,6 +915,8 @@ export default function App() {
             `Ingresa ${tipoCantidad === 'latas' ? 'las latas' : 'las unidades'}${cual} (dato de Amasado)`
           );
         }
+        const errorCant = errorCantidadCarro(c.cantidad, tipoCantidad);
+        if (errorCant) return setErrorMsg(`${errorCant}${cual}. Revisa el dato.`);
       }
       if (amFaltaDoble && Number(lista[0].carro) === Number(lista[1].carro)) {
         return setErrorMsg('Hay dos carros con el mismo número');
@@ -913,6 +932,14 @@ export default function App() {
       }
       if (cantidad2 === '' || Number(cantidad2) < 0) {
         return setErrorMsg('Ingresa la cantidad del segundo carro');
+      }
+    }
+    if (etapa === 'Amasado') {
+      const errorCant =
+        errorCantidadCarro(cantidadProducida, tipoCantidad) ||
+        (usaDobleCarro ? errorCantidadCarro(cantidad2, tipoCantidad) : '');
+      if (errorCant) {
+        return setErrorMsg(`${errorCant}. Revisa el número y vuelve a ingresarlo.`);
       }
     }
     if (etapa === 'Packing' && agregarPacking) {
@@ -1008,6 +1035,8 @@ export default function App() {
             `Ingresa ${tipoCantidad === 'latas' ? 'las latas' : 'las unidades'} del carro ${i + 1} (número entero)`
           );
         }
+        const errorCant = errorCantidadCarro(c.cantidad, tipoCantidad);
+        if (errorCant) return setErrorMsg(`${errorCant} (carro ${i + 1})`);
       }
       const nums = carrosCorr.map((c) => Number(c.carro));
       if (new Set(nums).size !== nums.length) {
@@ -1023,6 +1052,11 @@ export default function App() {
         return setErrorMsg(
           esUnitario ? 'Ingresa las unidades producidas' : 'Ingresa las latas producidas'
         );
+      }
+      // Corrección de un solo campo: puede sumar un segundo carro olvidado
+      if (!usaDobleCorr && !pideAmasado) {
+        const errorCant = errorCantidadCarro(cantidadCorregida, tipoCantidad, 2);
+        if (errorCant) return setErrorMsg(errorCant);
       }
       if (resultadoCalidad === 'parcial' && !(Number(unidadesRechazadas) > 0)) {
         return setErrorMsg('Ingresa cuántas unidades se rechazaron');
@@ -1207,11 +1241,37 @@ export default function App() {
           cantidadCorregida:
             !carrosCorregidos && !pideAmasado && corregida !== contadas
               ? corregida
-              : null,
+              : // Amasado ya tiene la corrección anterior: se conserva
+                !carrosCorregidos &&
+                  !pideAmasado &&
+                  previoHorneado?.cantidadCorregida === corregida
+                ? corregida
+                : null,
           revisadoPor: session.user,
           revisadoFecha: fechaStr,
           revisadoHora: horaStr,
         };
+        // Lo que calidad corrigió en horno también corrige Amasado (lo
+        // original queda en cantidadAnterior). Horneado guarda la corrección.
+        if (datosCalidad.cantidadCorregida != null && previoAmasado) {
+          const cambios = {
+            cantidadProducida: corregida,
+            cantidadCorregidaPor: `${session.user} (calidad en horno)`,
+            cantidadCorregidaEn: `${fechaStr} ${horaStr}`,
+          };
+          if (previoAmasado.cantidadAnterior == null) {
+            cambios.cantidadAnterior = contadas ?? null;
+          }
+          if (previoAmasado.carros?.length === 1) {
+            cambios.carros = [{ ...previoAmasado.carros[0], cantidad: corregida }];
+          }
+          try {
+            await updateDoc(doc(db, COL_OTS, previoAmasado.id), cambios);
+            Object.assign(previoAmasado, cambios);
+          } catch (err) {
+            console.error('No se pudo corregir la cantidad en Amasado', err);
+          }
+        }
         if (carrosCorregidos) {
           datosCalidad.batches = carrosCorregidos.batches;
           if (
@@ -1660,6 +1720,7 @@ export default function App() {
                     onChange={(e) => cambiarAmFalta(i, 'cantidad', e.target.value)}
                     className={ESTILO_INPUT}
                   />
+                  <AvisoCantidad valor={c.cantidad} tipo={tipoCantidad} />
                 </div>
               </div>
             ))}
@@ -1792,6 +1853,7 @@ export default function App() {
                     onChange={(e) => cambiarCarroCorr(i, 'cantidad', e.target.value)}
                     className={ESTILO_INPUT}
                   />
+                  <AvisoCantidad valor={c.cantidad} tipo={tipoCantidad} />
                 </div>
               </div>
             ))}
@@ -2340,6 +2402,7 @@ export default function App() {
                               onChange={(e) => setCantidadProducida(e.target.value)}
                               className={ESTILO_INPUT}
                             />
+                            <AvisoCantidad valor={cantidadProducida} tipo={tipoCantidad} />
                           </div>
                         )}
                       </div>
@@ -2404,6 +2467,7 @@ export default function App() {
                               onChange={(e) => setCantidad2(e.target.value)}
                               className={ESTILO_INPUT}
                             />
+                            <AvisoCantidad valor={cantidad2} tipo={tipoCantidad} />
                           </div>
                           {cantidadProducida !== '' && cantidad2 !== '' && (
                             <p className="col-span-2 text-xs font-bold text-slate-600">
@@ -2471,6 +2535,7 @@ export default function App() {
                             onChange={(e) => setCantidadCorregida(e.target.value)}
                             className={ESTILO_INPUT}
                           />
+                          <AvisoCantidad valor={cantidadCorregida} tipo={tipoCantidad} carros={2} />
                           <p className="text-[11px] text-slate-500 mt-1">
                             {regAmasado?.cantidadProducida != null
                               ? `En Amasado se registraron ${regAmasado.cantidadProducida} ${tipoCantidad}. Corrígelo si no coincide (por ejemplo, si faltó sumar el segundo carro).`
