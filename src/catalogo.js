@@ -16,7 +16,7 @@ export const CATALOGO_PAN = {
   'Panes de campo': ['Blanco', 'Integral', 'Integral linaza'],
   Hogazas: ['Integral linaza', 'Aceituna', 'Blanca semillas', 'Multigrano'],
   Moldes: ['Integral linaza', 'Maravilla', 'Amapola', 'Calabaza'],
-  'Moldes premium': ['Multisemillas', 'Fibra', 'Proteína', 'Low Gi'],
+  'Moldes premium': ['Multisemillas', 'Fibra', 'Proteína', 'Low Gi', 'Cinnamon'],
   Pruebas: ['Otros'],
 };
 
