@@ -82,23 +82,58 @@ const FORMATO_CARRO = /^\d+(-\d+)*$/;
 
 // --- Packing con doble carro ---
 const ES_ENTERO = /^\d+$/;
-// Un carro lleva como máximo 18 latas o 180 unidades
-const MAX_POR_CARRO = { latas: 18, unidades: 180 };
-const errorCantidadCarro = (valor, tipo, carros = 1) => {
+// Una OT sale como máximo en 3 carros. Un carro lleva como máximo 20 latas
+// o 180 unidades, y la OT completa, 54 latas o 540 unidades.
+const MAX_CARROS = 3;
+const MAX_POR_CARRO = { latas: 20, unidades: 180 };
+const MAX_POR_OT = { latas: 54, unidades: 540 };
+const errorCantidadCarro = (valor, tipo, { total = false } = {}) => {
   const v = String(valor ?? '').trim();
   if (v === '' || !ES_ENTERO.test(v)) return '';
-  const max = (MAX_POR_CARRO[tipo] || MAX_POR_CARRO.unidades) * carros;
+  const t = tipo === 'latas' ? 'latas' : 'unidades';
+  const max = (total ? MAX_POR_OT : MAX_POR_CARRO)[t];
   if (Number(v) <= max) return '';
-  return carros > 1
-    ? `Cantidad errónea: ${carros} carros llevan como máximo ${max} ${tipo}`
-    : `Cantidad errónea: un carro lleva como máximo ${max} ${tipo}`;
+  return total
+    ? `Cantidad errónea: una OT lleva como máximo ${max} ${t} (${MAX_CARROS} carros)`
+    : `Cantidad errónea: un carro lleva como máximo ${max} ${t}`;
 };
-const AvisoCantidad = ({ valor, tipo, carros }) => {
-  const error = errorCantidadCarro(valor, tipo, carros);
+// Total de varios carros de la misma OT
+const errorTotalOt = (cantidades, tipo) =>
+  errorCantidadCarro(
+    String(cantidades.reduce((a, c) => a + Number(c || 0), 0)),
+    tipo,
+    { total: true }
+  );
+const AvisoCantidad = ({ valor, tipo, total }) => {
+  const error = errorCantidadCarro(valor, tipo, { total });
   return error ? (
     <p className="text-xs font-bold text-red-600 mt-1">{error}</p>
   ) : null;
 };
+// Aviso del total de una lista de carros [{ cantidad }]
+const AvisoTotal = ({ lista, tipo }) => {
+  const error = errorTotalOt(lista.map((c) => c.cantidad), tipo);
+  return error ? <p className="text-xs font-bold text-red-600">{error}</p> : null;
+};
+// Agrega o quita el tercer carro de una lista de carros [{ carro, cantidad }]
+const BotonTercerCarro = ({ lista, cambiar }) =>
+  lista.length < MAX_CARROS ? (
+    <button
+      type="button"
+      onClick={() => cambiar((l) => [...l, { carro: '', cantidad: '' }])}
+      className="text-xs font-bold text-amber-700 hover:text-amber-900"
+    >
+      + Agregar tercer carro
+    </button>
+  ) : (
+    <button
+      type="button"
+      onClick={() => cambiar((l) => l.slice(0, 2))}
+      className="text-xs font-bold text-red-500 hover:text-red-700"
+    >
+      Quitar tercer carro
+    </button>
+  );
 const carroPkVacio = (numero = '') => ({ numero, cantidad: '', cajas: '' });
 const carroPkLleno = (c) =>
   String(c.cantidad).trim() !== '' && String(c.cajas).trim() !== '';
@@ -303,6 +338,10 @@ export default function App() {
   const [dobleCarro, setDobleCarro] = useState(false);
   const [carro2, setCarro2] = useState('');
   const [cantidad2, setCantidad2] = useState('');
+  // Tercer carro (OT con mucho sobrante, por ejemplo en producción nocturna)
+  const [tercerCarro, setTercerCarro] = useState(false);
+  const [carro3, setCarro3] = useState('');
+  const [cantidad3, setCantidad3] = useState('');
   // Packing con doble carro: N°, cantidad y cajas de cada carro
   const [carrosPk, setCarrosPk] = useState(() => [carroPkVacio(), carroPkVacio()]);
   const [tipoPk, setTipoPk] = useState('unidades');
@@ -790,6 +829,9 @@ export default function App() {
     setDobleCarro(false);
     setCarro2('');
     setCantidad2('');
+    setTercerCarro(false);
+    setCarro3('');
+    setCantidad3('');
     setCarrosPk([carroPkVacio(), carroPkVacio()]);
     setTipoPk('unidades');
     setAgregaPk(false);
@@ -918,9 +960,12 @@ export default function App() {
         const errorCant = errorCantidadCarro(c.cantidad, tipoCantidad);
         if (errorCant) return setErrorMsg(`${errorCant}${cual}. Revisa el dato.`);
       }
-      if (amFaltaDoble && Number(lista[0].carro) === Number(lista[1].carro)) {
+      const numsFalta = lista.map((c) => Number(c.carro));
+      if (new Set(numsFalta).size !== numsFalta.length) {
         return setErrorMsg('Hay dos carros con el mismo número');
       }
+      const errorTotal = errorTotalOt(lista.map((c) => c.cantidad), tipoCantidad);
+      if (errorTotal) return setErrorMsg(`${errorTotal}. Revisa el dato.`);
     }
     if (etapa === 'Amasado' && (!categoriaSel || !variedadSel)) {
       return setErrorMsg('Selecciona el tipo de pan y la variedad');
@@ -934,10 +979,32 @@ export default function App() {
         return setErrorMsg('Ingresa la cantidad del segundo carro');
       }
     }
+    const usaTercerCarro = usaDobleCarro && tercerCarro;
+    if (usaTercerCarro) {
+      if (!/^\d+$/.test(carro3.trim())) {
+        return setErrorMsg('Ingresa el N° del tercer carro');
+      }
+      if (cantidad3 === '' || Number(cantidad3) < 0) {
+        return setErrorMsg('Ingresa la cantidad del tercer carro');
+      }
+    }
+    if (usaDobleCarro) {
+      const nums = [carro, carro2, ...(usaTercerCarro ? [carro3] : [])].map((c) =>
+        Number(String(c).trim())
+      );
+      if (new Set(nums).size !== nums.length) {
+        return setErrorMsg('Hay dos carros con el mismo número');
+      }
+    }
     if (etapa === 'Amasado') {
+      const cantidades = [
+        cantidadProducida,
+        ...(usaDobleCarro ? [cantidad2] : []),
+        ...(usaTercerCarro ? [cantidad3] : []),
+      ];
       const errorCant =
-        errorCantidadCarro(cantidadProducida, tipoCantidad) ||
-        (usaDobleCarro ? errorCantidadCarro(cantidad2, tipoCantidad) : '');
+        cantidades.map((c) => errorCantidadCarro(c, tipoCantidad)).find(Boolean) ||
+        errorTotalOt(cantidades, tipoCantidad);
       if (errorCant) {
         return setErrorMsg(`${errorCant}. Revisa el número y vuelve a ingresarlo.`);
       }
@@ -946,6 +1013,11 @@ export default function App() {
       if (!agregaPk) {
         return setErrorMsg(
           `La OT #${otNumber} ya fue registrada en Packing. Si salió en otro carro, marca "Doble carro" para agregarlo.`
+        );
+      }
+      if ((regPacking.carros?.length || 1) >= MAX_CARROS) {
+        return setErrorMsg(
+          `La OT #${otNumber} ya tiene ${MAX_CARROS} carros en Packing: no se pueden agregar más.`
         );
       }
       if (convertirPacking) {
@@ -1042,6 +1114,8 @@ export default function App() {
       if (new Set(nums).size !== nums.length) {
         return setErrorMsg('Hay dos carros con el mismo número');
       }
+      const errorTotal = errorTotalOt(carrosCorr.map((c) => c.cantidad), tipoCantidad);
+      if (errorTotal) return setErrorMsg(errorTotal);
     }
     if (esCalidadHorno) {
       if (
@@ -1053,9 +1127,12 @@ export default function App() {
           esUnitario ? 'Ingresa las unidades producidas' : 'Ingresa las latas producidas'
         );
       }
-      // Corrección de un solo campo: puede sumar un segundo carro olvidado
+      // Corrección de un solo campo: es el total de la OT (puede sumar
+      // carros olvidados)
       if (!usaDobleCorr && !pideAmasado) {
-        const errorCant = errorCantidadCarro(cantidadCorregida, tipoCantidad, 2);
+        const errorCant = errorCantidadCarro(cantidadCorregida, tipoCantidad, {
+          total: true,
+        });
         if (errorCant) return setErrorMsg(errorCant);
       }
       if (resultadoCalidad === 'parcial' && !(Number(unidadesRechazadas) > 0)) {
@@ -1525,14 +1602,16 @@ export default function App() {
         datosEtapa.tipoCantidad = tipoCantidad;
         if (usaDobleCarro) {
           // Se guarda el total y el detalle de cada carro
-          const c2 = carro2.trim();
-          datosEtapa.carros = [
+          const lista = [
             { carro, cantidad: Number(cantidadProducida) },
-            { carro: c2, cantidad: Number(cantidad2) },
+            { carro: carro2.trim(), cantidad: Number(cantidad2) },
           ];
-          datosEtapa.cantidadProducida =
-            Number(cantidadProducida) + Number(cantidad2);
-          batches = `${carro}-${c2}`;
+          if (usaTercerCarro) {
+            lista.push({ carro: carro3.trim(), cantidad: Number(cantidad3) });
+          }
+          datosEtapa.carros = lista;
+          datosEtapa.cantidadProducida = lista.reduce((a, c) => a + c.cantidad, 0);
+          batches = lista.map((c) => c.carro).join('-');
         }
       }
       if (etapa === 'Horneado') {
@@ -1736,9 +1815,13 @@ export default function App() {
               </span>
             </label>
             {amFaltaDoble && (
-              <p className="text-xs font-bold text-slate-600">
-                Total de la OT: {total} {tipoCantidad}
-              </p>
+              <>
+                <BotonTercerCarro lista={amFalta} cambiar={setAmFalta} />
+                <p className="text-xs font-bold text-slate-600">
+                  Total de la OT: {total} {tipoCantidad}
+                </p>
+                <AvisoTotal lista={carros} tipo={tipoCantidad} />
+              </>
             )}
           </div>
         )}
@@ -1818,7 +1901,7 @@ export default function App() {
             </span>
             <span className="block text-left text-xs text-slate-500">
               {regAmasado?.carros?.length > 1
-                ? 'Amasado registró dos carros: corrígelos si no coinciden'
+                ? `Amasado registró ${regAmasado.carros.length} carros: corrígelos si no coinciden`
                 : 'Márcala si en Amasado olvidaron registrar el segundo carro'}
             </span>
           </span>
@@ -1857,10 +1940,12 @@ export default function App() {
                 </div>
               </div>
             ))}
+            <BotonTercerCarro lista={carrosCorr} cambiar={setCarrosCorr} />
             <p className="text-xs font-bold text-slate-600">
               Total de la OT: {total} {tipoCantidad}. Se corrige en Amasado y en
               las etapas siguientes.
             </p>
+            <AvisoTotal lista={carrosCorr} tipo={tipoCantidad} />
           </div>
         )}
       </div>
@@ -2469,11 +2554,77 @@ export default function App() {
                             />
                             <AvisoCantidad valor={cantidad2} tipo={tipoCantidad} />
                           </div>
+                          {tercerCarro ? (
+                            <>
+                              <div>
+                                <label className={ESTILO_LABEL}>Carro 3: N° de carro</label>
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  required
+                                  value={carro3}
+                                  onChange={(e) =>
+                                    setCarro3(e.target.value.replace(/\D/g, ''))
+                                  }
+                                  placeholder="Ej. 4"
+                                  className={ESTILO_INPUT}
+                                />
+                              </div>
+                              <div>
+                                <label className={ESTILO_LABEL}>
+                                  Carro 3:{' '}
+                                  {tipoCantidad === 'latas' ? 'N° de latas' : 'Unidades'}
+                                </label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  inputMode="numeric"
+                                  required
+                                  value={cantidad3}
+                                  onChange={(e) => setCantidad3(e.target.value)}
+                                  className={ESTILO_INPUT}
+                                />
+                                <AvisoCantidad valor={cantidad3} tipo={tipoCantidad} />
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setTercerCarro(false);
+                                  setCarro3('');
+                                  setCantidad3('');
+                                }}
+                                className="col-span-2 text-left text-xs font-bold text-red-500 hover:text-red-700"
+                              >
+                                Quitar tercer carro
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setTercerCarro(true)}
+                              className="col-span-2 text-left text-xs font-bold text-amber-700 hover:text-amber-900"
+                            >
+                              + Agregar tercer carro
+                            </button>
+                          )}
                           {cantidadProducida !== '' && cantidad2 !== '' && (
                             <p className="col-span-2 text-xs font-bold text-slate-600">
                               Total de la OT:{' '}
-                              {Number(cantidadProducida) + Number(cantidad2)}{' '}
+                              {Number(cantidadProducida) +
+                                Number(cantidad2) +
+                                (tercerCarro ? Number(cantidad3 || 0) : 0)}{' '}
                               {tipoCantidad}
+                            </p>
+                          )}
+                          {errorTotalOt(
+                            [cantidadProducida, cantidad2, tercerCarro ? cantidad3 : 0],
+                            tipoCantidad
+                          ) && (
+                            <p className="col-span-2 text-xs font-bold text-red-600">
+                              {errorTotalOt(
+                                [cantidadProducida, cantidad2, tercerCarro ? cantidad3 : 0],
+                                tipoCantidad
+                              )}
                             </p>
                           )}
                         </div>
@@ -2535,7 +2686,7 @@ export default function App() {
                             onChange={(e) => setCantidadCorregida(e.target.value)}
                             className={ESTILO_INPUT}
                           />
-                          <AvisoCantidad valor={cantidadCorregida} tipo={tipoCantidad} carros={2} />
+                          <AvisoCantidad valor={cantidadCorregida} tipo={tipoCantidad} total />
                           <p className="text-[11px] text-slate-500 mt-1">
                             {regAmasado?.cantidadProducida != null
                               ? `En Amasado se registraron ${regAmasado.cantidadProducida} ${tipoCantidad}. Corrígelo si no coincide (por ejemplo, si faltó sumar el segundo carro).`
@@ -2995,15 +3146,17 @@ export default function App() {
                                 </div>
                               ))}
 
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setCarrosPk((l) => [...l, carroPkVacio()])
-                                }
-                                className="text-xs font-bold text-amber-700 hover:text-amber-900"
-                              >
-                                + Agregar otro carro
-                              </button>
+                              {carrosPk.length < MAX_CARROS && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setCarrosPk((l) => [...l, carroPkVacio()])
+                                  }
+                                  className="text-xs font-bold text-amber-700 hover:text-amber-900"
+                                >
+                                  + Agregar tercer carro
+                                </button>
+                              )}
 
                               {carrosPkEf.some(carroPkLleno) && (
                                 <p className="text-xs font-bold text-slate-600">
